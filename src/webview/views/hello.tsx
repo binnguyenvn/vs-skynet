@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button } from "../components/ui/button";
-import { onMessage, postMessage } from "../lib/vscode";
+import { Button } from "@/components/ui/button";
+import { onMessage, postMessage } from "@/lib/vscode";
 
 export function HelloView() {
   const [reply, setReply] = useState("");

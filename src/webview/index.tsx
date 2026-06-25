@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
-import { HelloView } from "./views/hello";
+import { HelloView } from "@/views/hello";
+import { GalleryView } from "@/views/gallery";
 
 declare global {
   interface Window {
@@ -11,6 +12,8 @@ function App({ viewId }: { viewId: string }) {
   switch (viewId) {
     case "hello":
       return <HelloView />;
+    case "gallery":
+      return <GalleryView />;
     default:
       return <div className="p-4">Unknown view: {viewId}</div>;
   }

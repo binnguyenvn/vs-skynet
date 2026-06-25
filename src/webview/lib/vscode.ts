@@ -1,4 +1,4 @@
-import type { ExtensionToWebview, WebviewToExtension } from "../protocol";
+import type { ExtensionToWebview, WebviewToExtension } from "@/protocol";
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
