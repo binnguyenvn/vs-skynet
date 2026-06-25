@@ -1,4 +1,5 @@
 const esbuild = require("esbuild");
+const path = require("path");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -53,6 +54,7 @@ async function main() {
 		platform: 'browser',
 		outfile: 'dist/webview/main.js',
 		jsx: 'automatic',
+		alias: { '@': path.resolve(__dirname, 'src/webview') },
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
 	});

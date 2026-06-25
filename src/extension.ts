@@ -25,7 +25,10 @@ export function activate(context: vscode.ExtensionContext) {
 	const openPanel = vscode.commands.registerCommand("skynet-harness.openWebview", () => {
 		openWebview(context, "hello");
 	});
-	context.subscriptions.push(openPanel);
+	const openGallery = vscode.commands.registerCommand("skynet-harness.openGallery", () => {
+		openWebview(context, "gallery");
+	});
+	context.subscriptions.push(openPanel, openGallery);
 }
 
 // This method is called when your extension is deactivated

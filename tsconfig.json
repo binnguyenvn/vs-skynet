@@ -1,5 +1,6 @@
 {
     "compilerOptions": {
+        "ignoreDeprecations": "6.0",
         "module": "Node16",
         "target": "ES2022",
         "jsx": "react-jsx",
@@ -14,6 +15,10 @@
         ],
         "sourceMap": true,
         "rootDir": "src",
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["src/webview/*"]
+        },
         "strict": true, /* enable all strict type-checking options */
         /* Additional Checks */
         // "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */
