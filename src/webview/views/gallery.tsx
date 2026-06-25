@@ -117,6 +117,18 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Tree, TreeGroup, TreeItem } from "@/components/ui/tree";
+
+function ProviderIcon({ color, glyph }: { color: string; glyph: string }) {
+  return (
+    <span
+      className="flex size-6 items-center justify-center rounded-md text-xs font-semibold text-white"
+      style={{ backgroundColor: color }}
+    >
+      {glyph}
+    </span>
+  );
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -550,6 +562,49 @@ export function GalleryView() {
                 </TableRow>
               </TableBody>
             </Table>
+          </Section>
+
+          {/* ── Tree ── */}
+          <Section title="Tree">
+            <div className="w-[260px] rounded-md border bg-card p-1">
+              <Tree>
+                <TreeGroup label="Cloud" count={3}>
+                  <TreeItem
+                    icon={<ProviderIcon color="#10a37f" glyph="AI" />}
+                    label="OpenAI"
+                    meta="47 models · 142ms avg"
+                    status="online"
+                    selected
+                  />
+                  <TreeItem
+                    icon={<ProviderIcon color="#d97757" glyph="A" />}
+                    label="Anthropic"
+                    meta="12 models · 198ms avg"
+                    status="online"
+                  />
+                  <TreeItem
+                    icon={<ProviderIcon color="#4285f4" glyph="G" />}
+                    label="Gemini"
+                    meta="Degraded · high latency"
+                    status="degraded"
+                  />
+                </TreeGroup>
+                <TreeGroup label="Local" count={2}>
+                  <TreeItem
+                    icon={<ProviderIcon color="#71717a" glyph="O" />}
+                    label="Ollama"
+                    meta="localhost:11434 · offline"
+                    status="offline"
+                  />
+                  <TreeItem
+                    icon={<ProviderIcon color="#7c3aed" glyph="LM" />}
+                    label="LM Studio"
+                    meta="5 models · localhost:1234"
+                    status="online"
+                  />
+                </TreeGroup>
+              </Tree>
+            </div>
           </Section>
 
           {/* ── Footer ── */}
