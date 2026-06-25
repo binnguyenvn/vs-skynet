@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@source "./**/*.tsx";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-muted: var(--muted);
+  --color-destructive: var(--destructive);
+  --radius: var(--radius-base);
+}
+
+:root {
+  --background: var(--vscode-editor-background);
+  --foreground: var(--vscode-foreground);
+  --primary: var(--vscode-button-background);
+  --primary-foreground: var(--vscode-button-foreground);
+  --border: var(--vscode-panel-border);
+  --input: var(--vscode-input-background);
+  --ring: var(--vscode-focusBorder);
+  --muted: var(--vscode-editorWidget-background);
+  --destructive: var(--vscode-errorForeground);
+  --radius-base: 4px;
+}
+
+body {
+  margin: 0;
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--foreground);
+  background: var(--background);
+}
