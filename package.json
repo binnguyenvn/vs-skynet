@@ -16,6 +16,10 @@
       {
         "command": "skynet-harness.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "skynet-harness.openWebview",
+        "title": "Skynet: Open Webview"
       }
     ]
   },
