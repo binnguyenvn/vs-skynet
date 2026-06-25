@@ -2,46 +2,48 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Stand up a unified React + Tailwind v4 + shadcn foundation for the extension's many webviews, with styling that tracks the active VSCode theme automatically.
+**Goal:** Stand up a unified React + Tailwind v4 + full shadcn/ui foundation for the extension's many webviews, themed to track the active VSCode theme, with a gallery proving the theming holds across the whole component library.
 
-**Architecture:** Reuse the existing esbuild build by adding a second browser-target context for a single shared webview bundle; each panel is opened with a `viewId` and the React app renders the matching view. Tailwind v4 compiles via its CLI; shadcn tokens are remapped to VSCode CSS variables so panels follow light/dark/high-contrast.
+**Architecture:** Reuse the existing esbuild build by adding a second browser-target context for one shared webview bundle; each panel opens with a `viewId` and the React app renders the matching view. Tailwind v4 compiles via its CLI; the full shadcn library is installed via the shadcn CLI and its tokens are remapped to VSCode CSS variables.
 
-**Tech Stack:** TypeScript, esbuild, React 19, Tailwind CSS v4 (`@tailwindcss/cli`), shadcn-style components (class-variance-authority, clsx, tailwind-merge, @radix-ui/react-slot), VSCode Webview API.
+**Tech Stack:** TypeScript, esbuild, React 19, Tailwind CSS v4 (`@tailwindcss/cli`), shadcn/ui (full library via CLI), class-variance-authority, clsx, tailwind-merge, @radix-ui/*, lucide-react, VSCode Webview API.
 
 ## Global Constraints
 
 - VSCode engine: `^1.125.0` (already set).
-- Extension build target unchanged: `src/extension.ts` → `dist/extension.js` (node/cjs).
+- Extension build unchanged: `src/extension.ts` → `dist/extension.js` (node/cjs).
 - Webview bundle is browser/IIFE → `dist/webview/main.js`; styles → `dist/webview/main.css`.
 - No Vite. Webview builds through a second esbuild context + Tailwind CLI.
-- No path aliases (`@/...`) — use relative imports (avoids esbuild/tsconfig alias config).
+- Path alias `@/* → src/webview/*` (tsconfig `paths` + esbuild `alias`) — required so shadcn CLI's generated `@/...` imports resolve.
 - One shared webview bundle with an internal `switch` on `viewId`; no routing library.
-- shadcn theme tokens map to `var(--vscode-*)`; dark/light driven by the `vscode-*` body class VSCode sets — no separate theme toggle.
+- shadcn theme tokens map to `var(--vscode-*)`; dark/light driven by the `vscode-*` body class — no separate theme toggle.
 
 ---
 
-### Task 1: Webview build pipeline & theme glue
+### Task 1: Build pipeline, path alias & full theme tokens
 
 **Files:**
 - Modify: `package.json` (deps + scripts)
-- Modify: `esbuild.js` (second build context)
-- Modify: `tsconfig.json` (jsx + DOM lib)
-- Create: `src/webview/index.tsx` (stub, replaced in Task 4)
-- Create: `src/webview/styles.css` (Tailwind + VSCode var mapping)
+- Modify: `esbuild.js` (second context + `@` alias)
+- Modify: `tsconfig.json` (jsx, DOM lib, path alias)
+- Create: `src/webview/index.tsx` (stub, replaced in Task 5)
+- Create: `src/webview/styles.css` (Tailwind + full VSCode token map)
 
 **Interfaces:**
-- Produces: `dist/webview/main.js` (IIFE bundle of `src/webview/index.tsx`), `dist/webview/main.css` (compiled Tailwind). Later tasks load these two files.
+- Produces: `dist/webview/main.js` (IIFE bundle), `dist/webview/main.css` (compiled Tailwind), the `@/*` alias, and the full shadcn→vscode token set in CSS. Later tasks rely on all of these.
 
 - [ ] **Step 1: Install dependencies**
 
 ```bash
-npm i react react-dom class-variance-authority clsx tailwind-merge @radix-ui/react-slot
-npm i -D @types/react @types/react-dom tailwindcss @tailwindcss/cli
+npm i react react-dom class-variance-authority clsx tailwind-merge lucide-react
+npm i -D @types/react @types/react-dom tailwindcss @tailwindcss/cli tw-animate-css
 ```
 
-- [ ] **Step 2: Add DOM lib + JSX to `tsconfig.json`**
+(Radix packages are pulled transitively by shadcn components in Task 4.)
 
-Change `compilerOptions.lib` and add `jsx`:
+- [ ] **Step 2: Update `tsconfig.json` — jsx, DOM lib, path alias**
+
+Set `compilerOptions.lib`, and add `jsx`, `baseUrl`, `paths`:
 
 ```json
         "lib": [
@@ -50,13 +52,21 @@ Change `compilerOptions.lib` and add `jsx`:
             "DOM.Iterable"
         ],
         "jsx": "react-jsx",
+        "baseUrl": ".",
+        "paths": {
+            "@/*": ["src/webview/*"]
+        },
 ```
 
-(Place `"jsx": "react-jsx",` alongside the other compilerOptions, e.g. after `"target"`.)
+- [ ] **Step 3: Add the second esbuild context + alias in `esbuild.js`**
 
-- [ ] **Step 3: Add the second esbuild context in `esbuild.js`**
+At the top of the file, after `const esbuild = require("esbuild");`, add:
 
-Inside `main()`, after the existing extension `ctx` is created, add a webview context and handle both. Replace the `if (watch) { ... } else { ... }` block so it drives both contexts:
+```js
+const path = require("path");
+```
+
+Inside `main()`, after the existing extension `ctx`, add the webview context and drive both. Replace the existing `if (watch) { ... } else { ... }` block with:
 
 ```js
 	const webviewCtx = await esbuild.context({
@@ -69,6 +79,7 @@ Inside `main()`, after the existing extension `ctx` is created, add a webview co
 		platform: 'browser',
 		outfile: 'dist/webview/main.js',
 		jsx: 'automatic',
+		alias: { '@': path.resolve(__dirname, 'src/webview') },
 		logLevel: 'silent',
 		plugins: [esbuildProblemMatcherPlugin],
 	});
@@ -83,14 +94,14 @@ Inside `main()`, after the existing extension `ctx` is created, add a webview co
 
 - [ ] **Step 4: Add Tailwind + webview scripts in `package.json`**
 
-Add to `scripts` (keep existing entries):
+Add to `scripts`:
 
 ```json
     "build:css": "tailwindcss -i ./src/webview/styles.css -o ./dist/webview/main.css",
     "watch:css": "tailwindcss -i ./src/webview/styles.css -o ./dist/webview/main.css --watch",
 ```
 
-Update `compile` and `package` to also build CSS:
+Update `compile` and `package`:
 
 ```json
     "compile": "npm run check-types && npm run lint && node esbuild.js && npm run build:css",
@@ -99,35 +110,56 @@ Update `compile` and `package` to also build CSS:
 
 (`watch` stays `npm-run-all -p watch:*`; it now also runs `watch:css`.)
 
-- [ ] **Step 5: Create `src/webview/styles.css` (the theme glue)**
+- [ ] **Step 5: Create `src/webview/styles.css` (full theme glue)**
 
 ```css
 @import "tailwindcss";
+@import "tw-animate-css";
 @source "./**/*.tsx";
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-muted: var(--muted);
-  --color-destructive: var(--destructive);
   --radius: var(--radius-base);
 }
 
 :root {
   --background: var(--vscode-editor-background);
   --foreground: var(--vscode-foreground);
+  --card: var(--vscode-editorWidget-background);
+  --card-foreground: var(--vscode-foreground);
+  --popover: var(--vscode-editorWidget-background);
+  --popover-foreground: var(--vscode-foreground);
   --primary: var(--vscode-button-background);
   --primary-foreground: var(--vscode-button-foreground);
+  --secondary: var(--vscode-button-secondaryBackground);
+  --secondary-foreground: var(--vscode-button-secondaryForeground);
+  --muted: var(--vscode-editorWidget-background);
+  --muted-foreground: var(--vscode-descriptionForeground);
+  --accent: var(--vscode-list-hoverBackground);
+  --accent-foreground: var(--vscode-foreground);
+  --destructive: var(--vscode-errorForeground);
+  --destructive-foreground: var(--vscode-editor-background);
   --border: var(--vscode-panel-border);
   --input: var(--vscode-input-background);
   --ring: var(--vscode-focusBorder);
-  --muted: var(--vscode-editorWidget-background);
-  --destructive: var(--vscode-errorForeground);
   --radius-base: 4px;
 }
 
@@ -150,27 +182,22 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-- [ ] **Step 7: Build and verify outputs exist**
+- [ ] **Step 7: Build and verify outputs**
 
 Run: `npm run compile`
-Expected: command succeeds; both files exist:
-
-```bash
-ls dist/webview/main.js dist/webview/main.css
-```
-
-Expected: both paths listed, no error.
+Then: `ls dist/webview/main.js dist/webview/main.css`
+Expected: command succeeds; both files listed.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add package.json package-lock.json esbuild.js tsconfig.json src/webview/index.tsx src/webview/styles.css
-git commit -m "feat: add webview build pipeline (esbuild + tailwind v4) and theme glue"
+git commit -m "feat: webview build pipeline, @/ alias, and full vscode theme tokens"
 ```
 
 ---
 
-### Task 2: Shared message types + CSP HTML builder
+### Task 2: Message protocol + CSP HTML builder
 
 **Files:**
 - Create: `src/webview/protocol.ts`
@@ -215,7 +242,7 @@ suite("buildWebviewHtml", () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npm run compile-tests && npx vscode-test --label html 2>/dev/null || npm test`
+Run: `npm test`
 Expected: FAIL — cannot find module `../webview/html`.
 
 - [ ] **Step 3: Create `src/webview/html.ts`**
@@ -244,7 +271,7 @@ export function buildWebviewHtml(opts: {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; font-src ${cspSource};" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource} https: data:; script-src 'nonce-${nonce}'; font-src ${cspSource};" />
   <link href="${styleUri}" rel="stylesheet" />
 </head>
 <body>
@@ -273,18 +300,18 @@ export type ExtensionToWebview =
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test`
-Expected: PASS — both `buildWebviewHtml` tests green.
+Expected: PASS — both tests green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/webview/html.ts src/webview/protocol.ts src/test/html.test.ts
-git commit -m "feat: add webview message protocol and CSP html builder"
+git commit -m "feat: webview message protocol and CSP html builder"
 ```
 
 ---
 
-### Task 3: Extension webview helper + command
+### Task 3: Extension webview helper + commands
 
 **Files:**
 - Create: `src/webview/panel.ts`
@@ -293,7 +320,7 @@ git commit -m "feat: add webview message protocol and CSP html builder"
 
 **Interfaces:**
 - Consumes: `buildWebviewHtml`, `nonce` from `./html`; `WebviewToExtension` from `./protocol`.
-- Produces: `openWebview(context: vscode.ExtensionContext, viewId: string): vscode.WebviewPanel` — creates a themed panel, wires the message round-trip.
+- Produces: `openWebview(context: vscode.ExtensionContext, viewId: string): vscode.WebviewPanel`.
 
 - [ ] **Step 1: Create `src/webview/panel.ts`**
 
@@ -345,9 +372,9 @@ export function openWebview(
 }
 ```
 
-- [ ] **Step 2: Register the command in `src/extension.ts`**
+- [ ] **Step 2: Register commands in `src/extension.ts`**
 
-Add the import at the top (after the `vscode` import):
+Add the import after the `vscode` import:
 
 ```ts
 import { openWebview } from "./webview/panel";
@@ -359,17 +386,24 @@ Inside `activate()`, before `context.subscriptions.push(disposable);`, add:
 	const openPanel = vscode.commands.registerCommand("skynet-harness.openWebview", () => {
 		openWebview(context, "hello");
 	});
-	context.subscriptions.push(openPanel);
+	const openGallery = vscode.commands.registerCommand("skynet-harness.openGallery", () => {
+		openWebview(context, "gallery");
+	});
+	context.subscriptions.push(openPanel, openGallery);
 ```
 
-- [ ] **Step 3: Add the command to `package.json`**
+- [ ] **Step 3: Add the commands to `package.json`**
 
-In `contributes.commands`, add a second entry:
+In `contributes.commands`, add:
 
 ```json
       {
         "command": "skynet-harness.openWebview",
         "title": "Skynet: Open Webview"
+      },
+      {
+        "command": "skynet-harness.openGallery",
+        "title": "Skynet: Open Component Gallery"
       }
 ```
 
@@ -378,37 +412,100 @@ In `contributes.commands`, add a second entry:
 Run: `npm run compile`
 Expected: succeeds, no type errors.
 
-- [ ] **Step 5: Manual smoke check**
-
-Press `F5` to launch the Extension Development Host. Run command **"Skynet: Open Webview"** from the Command Palette.
-Expected: a panel titled "Skynet" opens showing "Skynet webview boot OK" (the Task 1 stub), styled with the editor's background/foreground colors.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/webview/panel.ts src/extension.ts package.json
-git commit -m "feat: add openWebview helper and Open Webview command"
+git commit -m "feat: openWebview helper and Open Webview/Gallery commands"
 ```
 
 ---
 
-### Task 4: Webview React UI + message round-trip
+### Task 4: Install the full shadcn/ui library
+
+> **Exploratory — verify as you go.** shadcn has no first-class esbuild preset, so we supply `components.json` by hand and use `add` (not `init`, which would rewrite our token block in `styles.css`). If a command errors, read its output and adapt; the success criterion is `src/webview/components/ui/` populated and `npm run compile` clean.
+
+**Files:**
+- Create: `components.json`
+- Create (by CLI): `src/webview/lib/utils.ts`, `src/webview/components/ui/*`
+- Possibly modify (by CLI): `package.json`, `package-lock.json` (radix deps)
+
+**Interfaces:**
+- Consumes: the `@/*` alias, `styles.css` token map (Task 1).
+- Produces: `cn()` at `@/lib/utils`; the full shadcn component set under `@/components/ui/*` (e.g. `button`, `card`, `input`, `label`, `checkbox`, `select`, `dialog`, `tabs`, `badge`, `switch`, ...).
+
+- [ ] **Step 1: Create `components.json`**
+
+```json
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/webview/styles.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "iconLibrary": "lucide"
+}
+```
+
+- [ ] **Step 2: Add the full component set**
+
+Run: `npx shadcn@latest add --all --yes --overwrite`
+Expected: components written under `src/webview/components/ui/`. If `--all` is rejected by the installed CLI version, list explicitly, e.g.:
+`npx shadcn@latest add --yes button card input label textarea checkbox switch select radio-group tabs dialog alert badge separator tooltip accordion avatar progress skeleton table`
+
+- [ ] **Step 3: Verify the library landed and still compiles**
+
+Run:
+```bash
+ls src/webview/components/ui | head
+cat src/webview/lib/utils.ts
+npm run compile
+```
+Expected: many `*.tsx` files listed; `utils.ts` exports `cn`; compile succeeds (CSS may warn on unmapped chart/sidebar tokens — only fix if a gallery-used component renders wrong).
+
+- [ ] **Step 4: Confirm the token block survived**
+
+Run: `git diff src/webview/styles.css`
+Expected: no change to the `:root` / `@theme inline` blocks from Task 1. If the CLI rewrote them, restore with `git checkout src/webview/styles.css` and re-run compile.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add components.json src/webview/lib src/webview/components package.json package-lock.json
+git commit -m "feat: install full shadcn/ui library via cli"
+```
+
+---
+
+### Task 5: Webview views — hello round-trip + component gallery
 
 **Files:**
 - Create: `src/webview/lib/vscode.ts`
-- Create: `src/webview/lib/utils.ts`
-- Create: `src/webview/components/ui/button.tsx`
 - Create: `src/webview/views/hello.tsx`
+- Create: `src/webview/views/gallery.tsx`
 - Modify: `src/webview/index.tsx` (replace stub with the view router)
 
 **Interfaces:**
-- Consumes: `WebviewToExtension`, `ExtensionToWebview` from `../protocol`; `openWebview` round-trip from Task 3.
-- Produces: the `hello` view rendering a shadcn `Button` that posts `{ type: "hello", name: "Skynet" }` and displays the `{ type: "greeting" }` reply.
+- Consumes: `WebviewToExtension`/`ExtensionToWebview` from `@/protocol`; shadcn components from `@/components/ui/*`; the Task 3 round-trip.
+- Produces: `hello` view (Button → message round-trip) and `gallery` view (renders the component set, themed).
 
 - [ ] **Step 1: Create `src/webview/lib/vscode.ts` (typed message bus)**
 
 ```ts
-import type { ExtensionToWebview, WebviewToExtension } from "../protocol";
+import type { ExtensionToWebview, WebviewToExtension } from "@/protocol";
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
@@ -428,56 +525,12 @@ export function onMessage(handler: (msg: ExtensionToWebview) => void): () => voi
 }
 ```
 
-- [ ] **Step 2: Create `src/webview/lib/utils.ts`**
-
-```ts
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]): string {
-  return twMerge(clsx(inputs));
-}
-```
-
-- [ ] **Step 3: Create `src/webview/components/ui/button.tsx`**
-
-```tsx
-import { Slot } from "@radix-ui/react-slot";
-import { cva, type VariantProps } from "class-variance-authority";
-import type { ButtonHTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
-
-const buttonVariants = cva(
-  "inline-flex items-center justify-center rounded-[var(--radius)] text-sm font-medium transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 px-4 py-2",
-  {
-    variants: {
-      variant: {
-        default: "bg-primary text-primary-foreground hover:opacity-90",
-        destructive: "bg-destructive text-white hover:opacity-90",
-      },
-    },
-    defaultVariants: { variant: "default" },
-  }
-);
-
-export interface ButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
-  asChild?: boolean;
-}
-
-export function Button({ className, variant, asChild = false, ...props }: ButtonProps) {
-  const Comp = asChild ? Slot : "button";
-  return <Comp className={cn(buttonVariants({ variant, className }))} {...props} />;
-}
-```
-
-- [ ] **Step 4: Create `src/webview/views/hello.tsx`**
+- [ ] **Step 2: Create `src/webview/views/hello.tsx`**
 
 ```tsx
 import { useEffect, useState } from "react";
-import { Button } from "../components/ui/button";
-import { onMessage, postMessage } from "../lib/vscode";
+import { Button } from "@/components/ui/button";
+import { onMessage, postMessage } from "@/lib/vscode";
 
 export function HelloView() {
   const [reply, setReply] = useState("");
@@ -504,11 +557,110 @@ export function HelloView() {
 }
 ```
 
-- [ ] **Step 5: Replace `src/webview/index.tsx` with the view router**
+- [ ] **Step 3: Create `src/webview/views/gallery.tsx`**
+
+Render a representative slice of the installed components, themed. Adjust imports to match what Task 4 actually installed (every import below is a default shadcn component).
+
+```tsx
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+      <div className="flex flex-wrap items-center gap-3">{children}</div>
+      <Separator />
+    </section>
+  );
+}
+
+export function GalleryView() {
+  return (
+    <div className="p-4 flex flex-col gap-4 max-w-2xl">
+      <h1 className="text-lg font-semibold">shadcn × VSCode theme</h1>
+
+      <Section title="Buttons">
+        <Button>Default</Button>
+        <Button variant="secondary">Secondary</Button>
+        <Button variant="destructive">Destructive</Button>
+        <Button variant="outline">Outline</Button>
+        <Button variant="ghost">Ghost</Button>
+      </Section>
+
+      <Section title="Badges">
+        <Badge>Default</Badge>
+        <Badge variant="secondary">Secondary</Badge>
+        <Badge variant="destructive">Destructive</Badge>
+        <Badge variant="outline">Outline</Badge>
+      </Section>
+
+      <Section title="Form">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="name">Name</Label>
+          <Input id="name" placeholder="Skynet" />
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox id="agree" />
+          <Label htmlFor="agree">Agree</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Switch id="on" />
+          <Label htmlFor="on">Enabled</Label>
+        </div>
+        <Select>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Pick one" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="a">Alpha</SelectItem>
+            <SelectItem value="b">Beta</SelectItem>
+          </SelectContent>
+        </Select>
+      </Section>
+
+      <Section title="Tabs & Card">
+        <Tabs defaultValue="one" className="w-full">
+          <TabsList>
+            <TabsTrigger value="one">One</TabsTrigger>
+            <TabsTrigger value="two">Two</TabsTrigger>
+          </TabsList>
+          <TabsContent value="one">
+            <Card>
+              <CardHeader>
+                <CardTitle>Card title</CardTitle>
+              </CardHeader>
+              <CardContent>Themed to the editor widget background.</CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="two">Second tab content.</TabsContent>
+        </Tabs>
+      </Section>
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Replace `src/webview/index.tsx` with the view router**
 
 ```tsx
 import { createRoot } from "react-dom/client";
-import { HelloView } from "./views/hello";
+import { HelloView } from "@/views/hello";
+import { GalleryView } from "@/views/gallery";
 
 declare global {
   interface Window {
@@ -520,6 +672,8 @@ function App({ viewId }: { viewId: string }) {
   switch (viewId) {
     case "hello":
       return <HelloView />;
+    case "gallery":
+      return <GalleryView />;
     default:
       return <div className="p-4">Unknown view: {viewId}</div>;
   }
@@ -529,25 +683,23 @@ const { viewId } = window.__INITIAL_STATE__;
 createRoot(document.getElementById("root")!).render(<App viewId={viewId} />);
 ```
 
-- [ ] **Step 6: Build and type-check**
+- [ ] **Step 5: Build and type-check**
 
 Run: `npm run compile`
-Expected: succeeds, no type errors, `dist/webview/main.js` + `main.css` regenerated.
+Expected: succeeds. If a gallery import doesn't match an installed component name, fix the import to the actual file in `src/webview/components/ui/`.
 
-- [ ] **Step 7: Manual round-trip verification**
+- [ ] **Step 6: Manual verification (F5)**
 
-Press `F5`. Run **"Skynet: Open Webview"**.
-Expected:
-1. Panel shows "Skynet Webview" heading and a button styled with the editor's button colors.
-2. Clicking the button → an information toast "Webview says hello: Skynet" appears.
-3. The text "Hello back, Skynet!" appears under the button.
-4. Switch VSCode theme (light ↔ dark) and reopen the panel → colors follow the theme.
+Press `F5`, then in the Extension Development Host:
+1. Run **"Skynet: Open Webview"** → click the button → toast "Webview says hello: Skynet" + "Hello back, Skynet!" appears.
+2. Run **"Skynet: Open Component Gallery"** → all sections render, styled with editor colors (buttons use button colors, inputs use input background, etc.).
+3. Switch theme (light ↔ dark ↔ high-contrast) and reopen → components follow the theme.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/webview/lib src/webview/components src/webview/views src/webview/index.tsx
-git commit -m "feat: add shadcn button, typed message bus, and hello round-trip view"
+git add src/webview/lib/vscode.ts src/webview/views src/webview/index.tsx
+git commit -m "feat: hello round-trip view and themed component gallery"
 ```
 
 ---
@@ -555,19 +707,19 @@ git commit -m "feat: add shadcn button, typed message bus, and hello round-trip 
 ## Self-Review
 
 **Spec coverage:**
-- Second esbuild context → Task 1. ✓
-- Tailwind v4 via CLI → Task 1 (scripts). ✓
-- One shared bundle + viewId switch → Task 4 (`index.tsx`). ✓
-- `openWebview` helper with CSP + nonce + asWebviewUri + injected state → Tasks 2 (html) + 3 (panel). ✓
-- Typed message bus `lib/vscode.ts` → Task 4. ✓
-- Theme mapping CSS + body class theming → Task 1 (`styles.css`). ✓
-- shadcn Button sample → Task 4. ✓
-- `hello` demo view round-trip → Tasks 3 + 4. ✓
-- Shared `protocol.ts` imported by both sides → Task 2 (created), consumed in 3 & 4. ✓
-- Demo command `skynet-harness.openWebview`, keep `helloWorld` → Task 3. ✓
-- Test on message/HTML shape → Task 2 (`html.test.ts`). ✓
-- Out of scope (routing/state libs, extra components, Vite) → not added. ✓
+- Second esbuild context + Tailwind CLI → Task 1. ✓
+- Path alias `@/*` → Task 1 (tsconfig + esbuild). ✓
+- Full shadcn token map → Task 1 (`styles.css`). ✓
+- `openWebview` helper, CSP + nonce + asWebviewUri + injected state → Tasks 2 + 3. ✓
+- Shared `protocol.ts` for both sides → Task 2, consumed in 3 & 5. ✓
+- Typed message bus → Task 5 (`lib/vscode.ts`). ✓
+- Full shadcn library via CLI + `components.json` → Task 4. ✓
+- Gallery view + `openGallery` command → Tasks 3 + 5. ✓
+- hello round-trip demo → Tasks 3 + 5. ✓
+- Commands `openWebview`/`openGallery`, keep `helloWorld` → Task 3. ✓
+- Test on HTML/CSP shape → Task 2 (`html.test.ts`). ✓
+- Out of scope (routing/state libs, rich per-component demos, Vite) → not added. ✓
 
-**Placeholder scan:** No TBD/TODO; all code blocks complete.
+**Placeholder scan:** No TBD/TODO. Task 4 is intentionally exploratory with explicit verification + fallback commands, not placeholder text.
 
-**Type consistency:** `WebviewToExtension`/`ExtensionToWebview` defined in Task 2 and used identically in `panel.ts` (Task 3) and `lib/vscode.ts` (Task 4). `buildWebviewHtml` signature matches between `html.ts`, the test, and `panel.ts`. `openWebview(context, viewId)` matches its call site. `__INITIAL_STATE__` shape `{ viewId }` matches between `html.ts` injection and `index.tsx` read. ✓
+**Type consistency:** `WebviewToExtension`/`ExtensionToWebview` defined in Task 2, used identically in `panel.ts` (Task 3) and `lib/vscode.ts` (Task 5). `buildWebviewHtml` signature matches across `html.ts`, the test, and `panel.ts`. `openWebview(context, viewId)` matches both call sites (`hello`, `gallery`). `__INITIAL_STATE__` shape `{ viewId }` matches between `html.ts` injection and `index.tsx` read. `cn` from `@/lib/utils` (Task 4) is used only by CLI-generated components. ✓
