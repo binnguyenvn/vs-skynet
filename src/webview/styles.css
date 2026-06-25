@@ -1,9 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.vscode-dark *));
 @source "./**/*.tsx";
 
+/*
+ * ─── Tailwind ← Intermediate tokens ───────────────────────────────
+ * The @theme block maps Tailwind utility names (bg-primary, text-foreground, …)
+ * to our intermediate variables defined in :root below.
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -35,41 +40,191 @@
   --color-sidebar: var(--sidebar);
 }
 
+/*
+ * ─── Intermediate tokens ← VSCode CSS variables ──────────────────
+ * Every value here resolves to a var(--vscode-*) injected by the
+ * webview host.  Fallbacks use other vscode vars so the panel never
+ * shows raw white/black when a theme omits an optional token.
+ *
+ * Ref: https://code.visualstudio.com/api/references/theme-color
+ */
 :root {
+  /* ── surfaces ── */
   --background: var(--vscode-editor-background);
   --foreground: var(--vscode-foreground);
-  --card: var(--vscode-editorWidget-background);
-  --card-foreground: var(--vscode-foreground);
-  --popover: var(--vscode-editorWidget-background);
-  --popover-foreground: var(--vscode-foreground);
+
+  --card: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --card-foreground: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+
+  --popover: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  --popover-foreground: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+
+  --muted: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+  --muted-foreground: var(--vscode-descriptionForeground);
+
+  --accent: var(--vscode-list-hoverBackground);
+  --accent-foreground: var(--vscode-list-hoverForeground, var(--vscode-foreground));
+
+  /* ── actions ── */
   --primary: var(--vscode-button-background);
   --primary-foreground: var(--vscode-button-foreground);
+  --primary-hover: var(--vscode-button-hoverBackground);
+
   --secondary: var(--vscode-button-secondaryBackground);
   --secondary-foreground: var(--vscode-button-secondaryForeground);
-  --muted: var(--vscode-editorWidget-background);
-  --muted-foreground: var(--vscode-descriptionForeground);
-  --accent: var(--vscode-list-hoverBackground);
-  --accent-foreground: var(--vscode-foreground);
+  --secondary-hover: var(--vscode-button-secondaryHoverBackground);
+
   --destructive: var(--vscode-errorForeground);
-  --destructive-foreground: var(--vscode-editor-background);
-  --border: var(--vscode-panel-border);
+  --destructive-foreground: var(--vscode-button-foreground);
+
+  /* ── chrome ── */
+  --border: var(--vscode-widget-border, var(--vscode-panel-border, transparent));
   --input: var(--vscode-input-background);
+  --input-foreground: var(--vscode-input-foreground, var(--vscode-foreground));
+  --input-border: var(--vscode-input-border, var(--vscode-widget-border, transparent));
+  --input-placeholder: var(--vscode-input-placeholderForeground);
   --ring: var(--vscode-focusBorder);
   --radius-base: 4px;
-  --sidebar: var(--vscode-sideBar-background);
+
+  /* ── native element colors ── */
+  --link: var(--vscode-textLink-foreground);
+  --link-active: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  --badge-bg: var(--vscode-badge-background);
+  --badge-fg: var(--vscode-badge-foreground);
+  --progress: var(--vscode-progressBar-background);
+  --checkbox-bg: var(--vscode-checkbox-background, var(--vscode-input-background));
+  --checkbox-fg: var(--vscode-checkbox-foreground, var(--vscode-foreground));
+  --checkbox-border: var(--vscode-checkbox-border, var(--vscode-input-border, transparent));
+  --dropdown-bg: var(--vscode-dropdown-background, var(--vscode-input-background));
+  --dropdown-fg: var(--vscode-dropdown-foreground, var(--vscode-foreground));
+  --dropdown-border: var(--vscode-dropdown-border, var(--vscode-input-border, transparent));
+  --dropdown-list-bg: var(--vscode-dropdown-listBackground, var(--vscode-dropdown-background));
+  --selection-bg: var(--vscode-selection-background);
+  --icon-fg: var(--vscode-icon-foreground, var(--vscode-foreground));
+  --code-bg: var(--vscode-textCodeBlock-background, var(--vscode-textPreformat-background));
+  --separator: var(--vscode-textSeparator-foreground, var(--vscode-widget-border, var(--vscode-panel-border)));
+  --contrast-border: var(--vscode-contrastBorder, transparent);
+
+  /* ── scrollbar ── */
+  --scrollbar-bg: var(--vscode-scrollbar-background, transparent);
+  --scrollbar-thumb: var(--vscode-scrollbarSlider-background);
+  --scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground);
+  --scrollbar-thumb-active: var(--vscode-scrollbarSlider-activeBackground);
+  --scrollbar-shadow: var(--vscode-scrollbar-shadow, transparent);
+
+  /* ── sidebar ── */
+  --sidebar: var(--vscode-sideBar-background, var(--vscode-editor-background));
   --sidebar-foreground: var(--vscode-sideBar-foreground, var(--vscode-foreground));
   --sidebar-primary: var(--vscode-button-background);
   --sidebar-primary-foreground: var(--vscode-button-foreground);
   --sidebar-accent: var(--vscode-list-hoverBackground);
-  --sidebar-accent-foreground: var(--vscode-foreground);
-  --sidebar-border: var(--vscode-sideBar-border, var(--vscode-panel-border));
+  --sidebar-accent-foreground: var(--vscode-list-hoverForeground, var(--vscode-foreground));
+  --sidebar-border: var(--vscode-sideBar-border, var(--vscode-widget-border, transparent));
   --sidebar-ring: var(--vscode-focusBorder);
 }
 
+/*
+ * ─── Base resets ──────────────────────────────────────────────────
+ * Match VSCode's own workbench rendering as closely as possible.
+ */
 body {
   margin: 0;
+  padding: 0;
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
+  font-weight: var(--vscode-font-weight, 400);
   color: var(--foreground);
   background: var(--background);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Links ── */
+a {
+  color: var(--link);
+}
+a:hover,
+a:active {
+  color: var(--link-active);
+}
+
+/* ── Code / monospace ── */
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--selection-bg);
+}
+
+/* ── Focus outline — match VSCode's 1px solid focusBorder ── */
+:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+/*
+ * ─── Scrollbar — match VSCode native ─────────────────────────────
+ * VSCode uses thin overlay scrollbars. We replicate as closely as
+ * the webview allows.
+ */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 0;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-active);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/*
+ * ─── Native input overrides ──────────────────────────────────────
+ * shadcn components use these elements; the overrides ensure they
+ * inherit the correct VSCode colors rather than browser defaults.
+ */
+input,
+textarea,
+select {
+  color: var(--input-foreground);
+  background: var(--input);
+  border-color: var(--input-border);
+  font-family: inherit;
+  font-size: inherit;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--input-placeholder);
+  opacity: 1;
+}
+
+/* ── High contrast support ── */
+@media (forced-colors: active) {
+  * {
+    forced-color-adjust: none;
+  }
 }
