@@ -25,5 +25,14 @@
     "plan": null,
     "created": "2026-06-26",
     "completed": "2026-06-26"
+  },
+  {
+    "slug": "worker-epic1-codex-adapter",
+    "title": "Worker Epic 1: Codex Adapter",
+    "status": "done",
+    "spec": null,
+    "plan": "plans/2026-06-26-worker-epic1-codex-adapter.md",
+    "created": "2026-06-26",
+    "completed": "2026-06-27"
   }
 ]
