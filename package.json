@@ -24,6 +24,10 @@
       {
         "command": "skynet-harness.openGallery",
         "title": "Skynet: Open Component Gallery"
+      },
+      {
+        "command": "skynet-harness.openWorker",
+        "title": "Skynet: Open Worker"
       }
     ]
   },
