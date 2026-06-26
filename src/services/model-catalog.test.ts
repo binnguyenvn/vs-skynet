@@ -56,6 +56,7 @@ async function withCatalogEnvironment(
   options: {
     fetchText?: string | Error;
     fetchDelayMs?: number;
+    fetchImpl?: typeof globalThis.fetch;
     diskText?: string | null;
     diskMtimeAgeMs?: number | null;
   },
@@ -80,7 +81,7 @@ async function withCatalogEnvironment(
     }
   }
 
-  globalThis.fetch = async () => {
+  globalThis.fetch = options.fetchImpl ?? (async () => {
     fetchCalls += 1;
     if (options.fetchText instanceof Error) {
       throw options.fetchText;
@@ -93,7 +94,7 @@ async function withCatalogEnvironment(
       text: async () => options.fetchText ?? JSON.stringify(REMOTE_FIXTURE),
       status: 200,
     } as Response;
-  };
+  });
 
   try {
     await run({
@@ -201,6 +202,45 @@ suite("model-catalog", () => {
     assert.deepStrictEqual(models, expected);
   });
 
+  test("hung fetch times out and falls back to snapshot data", async () => {
+    const expected = await expectedSnapshotModels("anthropic");
+    let models: ModelInfo[] = [];
+    let elapsedMs = 0;
+
+    await withCatalogEnvironment(
+      {
+        fetchImpl: async (_input, init) => {
+          const start = Date.now();
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (signal?.aborted) {
+              elapsedMs = Date.now() - start;
+              reject(signal.reason);
+              return;
+            }
+            signal?.addEventListener(
+              "abort",
+              () => {
+                elapsedMs = Date.now() - start;
+                reject(signal.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+        diskText: null,
+        diskMtimeAgeMs: null,
+      },
+      async ({ context }) => {
+        models = await getModelsByCompany(context, "anthropic");
+      },
+    );
+
+    assert.deepStrictEqual(models, expected);
+    assert.ok(elapsedMs > 0);
+    assert.ok(elapsedMs < 1000, `expected timeout fallback under 1000ms, got ${elapsedMs}ms`);
+  });
+
   test("fresh disk cache is used before fetch", async () => {
     await withCatalogEnvironment(
       {
@@ -262,5 +302,31 @@ suite("model-catalog", () => {
         );
       },
     );
+  });
+
+  test("returned aliases are copied from cached catalog data", async () => {
+    let first: ModelInfo | undefined;
+    let second: ModelInfo | undefined;
+
+    await withCatalogEnvironment(
+      {
+        diskText: JSON.stringify(DISK_FIXTURE),
+        diskMtimeAgeMs: 10,
+      },
+      async ({ context }) => {
+        first = (await getModelsByCompany(context, "anthropic")).find(
+          (entry: ModelInfo) => entry.id === "claude-opus-4-5",
+        );
+        assert.ok(first);
+        first.aliases.push("mutated");
+
+        second = (await getModelsByCompany(context, "anthropic")).find(
+          (entry: ModelInfo) => entry.id === "claude-opus-4-5",
+        );
+      },
+    );
+
+    assert.ok(second);
+    assert.deepStrictEqual(second.aliases, ["claude-opus-4.5"]);
   });
 });

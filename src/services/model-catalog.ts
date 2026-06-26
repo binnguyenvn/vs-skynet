@@ -16,6 +16,7 @@ const REMOTE_URL =
   "https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json";
 const CACHE_FILE = "model-catalog.json";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 250;
 const AGGREGATORS = new Set<Company>(["openrouter", "nvidia"]);
 const EMPTY_CATALOG: RawCatalog = { models: {} };
 const catalogsByContext = new WeakMap<vscode.ExtensionContext, ModelCatalogService>();
@@ -112,7 +113,7 @@ function selectModels(catalog: RawCatalog, company: Company): ModelInfo[] {
       id,
       displayName: entry.display_name ?? id,
       ownedBy,
-      aliases: entry.aliases ?? [],
+      aliases: [...(entry.aliases ?? [])],
     });
   }
 
@@ -233,7 +234,7 @@ function createCatalogDeps(context: vscode.ExtensionContext): CatalogDeps {
     ttlMs: DEFAULT_TTL_MS,
     snapshot: SNAPSHOT,
     fetchText: async () => {
-      const response = await fetch(REMOTE_URL);
+      const response = await fetch(REMOTE_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status} from ${REMOTE_URL}`);
       }
