@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Model Catalog — Design</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; margin: 2rem auto; max-width: 880px; padding: 0 1.25rem; color: #1a1a1a; }
+  h1 { margin: 0 0 .5rem; } h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: .3rem; }
+  h3 { margin-top: 1.6rem; }
+  code { background: #f4f4f5; padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+  pre { background: #1e1e2e; color: #e4e4e7; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .45rem .7rem; border: 1px solid #e4e4e7; vertical-align: top; }
+  th { background: #fafafa; }
+  blockquote { border-left: 3px solid #c4b5fd; margin: 1rem 0; padding: .25rem 1rem; color: #555; background: #faf9ff; }
+  a { color: #2563eb; text-decoration: none; } a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<h1>Model Catalog — Design</h1>
+<p><strong>Date:</strong> 2026-06-26
+<strong>Status:</strong> Draft</p>
+<blockquote>
+<p>A small extension-host <strong>service</strong> that turns the public
+<a href="https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json"><code>ENTERPILOT/ai-model-list/models.json</code></a>
+into the answer to one question: <em>which model names can I call for a given
+Company?</em> It is the source of model identities the
+<a href="2026-06-26-worker-design.md">Worker</a> uses when assembling an Agent.</p>
+</blockquote>
+<hr>
+
+<h2>1. Goal &amp; value proposition</h2>
+<p>The Worker's Agent is "a <strong>Model</strong> from a <strong>Company</strong>." Something has to know the
+list of real, current model ids per Company so the operator can pick one and the
+runtime can call it. That something is the <strong>Model Catalog service</strong>.</p>
+<p>It does exactly one job: <code>getModelsByCompany(company)</code> → a list of callable
+models. It is <strong>not</strong> a router, not a pricing engine, not a capability filter —
+just the catalog.</p>
+<p>The upstream data is community-maintained and updates often, so the service reads
+it <strong>live</strong> but never <em>depends</em> on the network being up: it always has an answer.</p>
+
+<h2>2. Where it runs</h2>
+<p><strong>Extension host (Node)</strong> — not the webview. It needs <code>fetch</code> and a disk cache
+(<code>context.globalStorageUri</code>); the webview has neither cleanly. If the webview ever
+needs the list, it requests it over the existing <code>src/webview/protocol.ts</code> channel.</p>
+<pre><code>src/services/model-catalog.ts        # the service (one file)
+src/services/models.snapshot.json    # committed bundled fallback (a fetched copy)
+src/services/model-catalog.test.ts   # one test file</code></pre>
+
+<h2>3. Data source: the upstream JSON</h2>
+<pre><code>{
+  "models": {
+    "claude-opus-4-5": {
+      "display_name": "Claude Opus 4.5",
+      "owned_by": "anthropic",
+      "aliases": ["claude-opus-4.5", "claude-opus-4-5-20250929"]
+    },
+    "FLUX-1.1-pro": {
+      "display_name": "Flux 1 1 Pro"
+      // note: NO owned_by
+    }
+    // ~500 entries
+  }
+}</code></pre>
+<p>Facts that drive the design:</p>
+<ul>
+<li>The model <strong>id is the object key</strong> — that is the string you call with.</li>
+<li><strong><code>owned_by</code> is optional.</strong> Many models (e.g. image-gen) omit it.</li>
+<li><code>owned_by</code> values are <strong>true owners</strong> (<code>anthropic</code>, <code>openai</code>, <code>google</code>,
+<code>meta</code>, …) — <em>not</em> the Worker's full Company set.</li>
+</ul>
+
+<h2>4. Public API</h2>
+<pre><code>type Company = 'openai' | 'anthropic' | 'google' | 'openrouter' | 'nvidia';
+
+type ModelInfo = {
+  id: string;          // object key — the string used to call the model
+  displayName: string; // display_name (fallback: id)
+  ownedBy: string;     // raw owned_by, or '' when absent
+  aliases: string[];   // aliases, or []
+};
+
+getModelsByCompany(company: Company): Promise&lt;ModelInfo[]&gt;</code></pre>
+<p>That's the whole surface. One function.</p>
+<h3>Company → models mapping</h3>
+<table>
+<thead><tr><th>Company</th><th>Rule</th></tr></thead>
+<tbody>
+<tr><td><code>openai</code></td><td>models where <code>owned_by === 'openai'</code></td></tr>
+<tr><td><code>anthropic</code></td><td>models where <code>owned_by === 'anthropic'</code></td></tr>
+<tr><td><code>google</code></td><td>models where <code>owned_by === 'google'</code></td></tr>
+<tr><td><code>openrouter</code></td><td><strong>all</strong> models (aggregator — resells everyone)</td></tr>
+<tr><td><code>nvidia</code></td><td><strong>all</strong> models (aggregator — resells everyone)</td></tr>
+</tbody>
+</table>
+<ul>
+<li>Owner-filtered companies <strong>drop</strong> models with no <code>owned_by</code>.</li>
+<li>Aggregators <strong>keep</strong> them.</li>
+<li>An empty list is a valid answer, <strong>not</strong> an error.</li>
+</ul>
+
+<h2>5. Data flow — fetch + cache + bundled fallback</h2>
+<pre><code>getModelsByCompany(company)
+  │
+  ├─ in-memory cache (this session) ──── present?  → map + return
+  │
+  ├─ disk cache (globalStorage)     ──── fresh (&lt; TTL)?  → load, hold, map + return
+  │
+  ├─ fetch(REMOTE_URL)              ──── 200 + valid?  → write disk, hold, map + return
+  │
+  └─ bundled models.snapshot.json   ──── always works   → hold, map + return</code></pre>
+<ul>
+<li><strong>TTL: 24h.</strong> Stale disk copy triggers a fetch; failed fetch still uses the
+stale copy / snapshot — staleness never blocks a call.</li>
+<li>Fetched body <strong>validated with <code>zod</code></strong> before it's trusted or written. Invalid →
+treated as fetch failure. Stops an upstream schema break from poisoning the cache.</li>
+<li><strong>Never throws</strong> from a public call. Worst case = bundled snapshot data.</li>
+<li>A single in-flight fetch promise is shared so parallel first calls don't each hit
+the network.</li>
+</ul>
+
+<h2>6. Snapshot refresh</h2>
+<p><code>models.snapshot.json</code> is a committed copy of the upstream file — the offline floor.
+One npm script, no codegen:</p>
+<pre><code>"refresh:models": "curl -sSL https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json -o src/services/models.snapshot.json"</code></pre>
+
+<h2>7. Error handling summary</h2>
+<table>
+<thead><tr><th>Situation</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>Offline / fetch fails</td><td>Use disk cache; else bundled snapshot</td></tr>
+<tr><td>Upstream returns malformed JSON</td><td>zod rejects → treated as fetch failure</td></tr>
+<tr><td>Company has no matching models</td><td>Return <code>[]</code> (valid, not an error)</td></tr>
+<tr><td>Model missing <code>owned_by</code></td><td>Excluded from owner filter; kept for aggregators</td></tr>
+<tr><td>Model missing <code>display_name</code></td><td><code>displayName</code> falls back to <code>id</code></td></tr>
+</tbody>
+</table>
+
+<h2>8. Testing</h2>
+<ul>
+<li><code>getModelsByCompany('anthropic')</code> → only <code>owned_by === 'anthropic'</code> entries.</li>
+<li><code>getModelsByCompany('openrouter')</code> → <strong>all</strong> entries (incl. no-<code>owned_by</code>).</li>
+<li>A model with no <code>owned_by</code> is absent from an owner-filtered result.</li>
+<li><code>displayName</code> falls back to <code>id</code> when <code>display_name</code> is missing.</li>
+<li>Malformed fetched JSON → service returns mapped <strong>snapshot</strong> data (no throw).</li>
+</ul>
+
+<h2>9. Out of scope (YAGNI)</h2>
+<ul>
+<li><code>resolveModel(idOrAlias)</code> — alias → canonical id resolution.</li>
+<li>Capability / context-window / pricing filters or richer <code>ModelInfo</code> fields.</li>
+<li>Webview model-picker UI (separate feature; consumes this service over <code>protocol.ts</code>).</li>
+<li>Auto-refresh scheduling beyond the 24h-TTL-on-call behavior.</li>
+</ul>
+</body>
+</html>
