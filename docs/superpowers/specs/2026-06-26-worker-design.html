@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Worker — Design</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; margin: 2rem auto; max-width: 880px; padding: 0 1.25rem; color: #1a1a1a; }
+  h1 { margin: 0 0 .5rem; } h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: .3rem; }
+  h3 { margin-top: 1.6rem; }
+  code { background: #f4f4f5; padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+  pre { background: #1e1e2e; color: #e4e4e7; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .45rem .7rem; border: 1px solid #e4e4e7; vertical-align: top; }
+  th { background: #fafafa; }
+  blockquote { border-left: 3px solid #c4b5fd; margin: 1rem 0; padding: .25rem 1rem; color: #555; background: #faf9ff; }
+  a { color: #2563eb; text-decoration: none; } a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<h1>Worker — Design</h1>
+<p><strong>Date:</strong> 2026-06-26
+<strong>Status:</strong> Draft — full vision spec (implementation phased separately)</p>
+<blockquote>
+<p>This is the <strong>big-picture</strong> spec for the <code>Worker</code> — Skynet&#39;s core unit and the
+single strongest capability of this extension. It describes the whole system,
+not just the first slice. Implementation is ordered by dependency at the end;
+each phase becomes its own implementation plan. Scope is intentionally <em>not</em>
+trimmed here — the MVP is just Phase 1.</p>
+</blockquote>
+<hr>
+<h2>1. Goal &amp; value proposition</h2>
+<p>A <strong>Worker</strong> is a complete, ready-to-run AI unit produced by attaching a
+<strong>harness</strong> to an <strong>agent</strong>. The extension&#39;s strongest value is: take a task,
+pick the right agent, wrap it in the right harness, and hand back a Worker that
+is the best possible executor for that task.</p>
+<blockquote>
+<p>Formula: <strong>Agent = LLM model + Harness</strong> (harness engineering); a Worker is the
+instantiated, runnable form of that pairing. Same model + better harness →
+measurably better results (the wrapper matters more than the model).</p>
+</blockquote>
+<p>This spec covers <strong>how a Worker is modeled, assembled, and executed</strong>. It does
+<strong>not</strong> cover routing (which agent to pick for which task) — that is a later,
+separate capability that consumes Workers. Here, the operator picks the agent;
+the system builds and runs the Worker.</p>
+<hr>
+<h2>2. Core concepts &amp; terminology</h2>
+<ul>
+<li><strong>Company</strong> (AI Provider) — <code>openai | anthropic | google | openrouter | nvidia</code>.</li>
+<li><strong>Protocol</strong> — how we talk to the company:<ul>
+<li><code>cli</code> (UI label <strong>Local</strong>) — the company&#39;s official command-line agent.
+&quot;Local&quot; means the official CLI, <strong>not</strong> a local model server.</li>
+<li><code>http</code> (UI label <strong>Cloud</strong>) — the company&#39;s HTTP API.</li>
+</ul>
+</li>
+<li><strong>Sub-protocol</strong> — same Company + same Protocol, but a different
+(AuthMethod → endpoint URL) pairing. E.g. one OpenAI HTTP sub-protocol uses an
+<strong>API key</strong> against <code>api.openai.com</code>; another uses an <strong>access token</strong> against
+a different backend URL.</li>
+<li><strong>AuthMethod</strong> — <code>apiKey | oauth2Pkce | oauth2 | deviceCode</code>. Which methods are
+allowed is constrained by the (Company × Protocol) pair (and pins the
+sub-protocol).</li>
+<li><strong>Credentials</strong> — the concrete secret (key / token) satisfying an AuthMethod.</li>
+<li><strong>Model</strong> — the specific LLM the agent runs (e.g. a Codex model id).</li>
+<li><strong>Agent</strong> — an LLM <strong>Model</strong> provided by a <strong>Company</strong>, reachable over a
+<strong>Protocol</strong> (+ sub-protocol), authenticated by an <strong>AuthMethod</strong> with
+<strong>Credentials</strong>.</li>
+<li><strong>Harness</strong> — everything wrapped around the agent to make it effective and
+safe: tools, guardrails, feedback loops, observability, hooks, linters,
+quality gates, repo management.</li>
+<li><strong>Worker</strong> — <strong>Agent + Harness</strong>. The deliverable.</li>
+</ul>
+<h3>The tree</h3>
+<pre><code>Worker
+├── Agent                         (who we call + how we connect)
+│   ├── Company                   openai | anthropic | google | openrouter | nvidia
+│   ├── Protocol                  cli (Local) | http (Cloud)
+│   │   └── sub_protocol          (AuthMethod + endpoint URL)
+│   │       ├── AuthMethod        apiKey | oauth2Pkce | oauth2 | deviceCode
+│   │       ├── Endpoint URL
+│   │       └── Credentials       key / token satisfying AuthMethod
+│   └── Model                     the LLM the agent runs
+└── Harness                       (shapes execution env; makes the agent good)
+    ├── Tools
+    ├── Guardrails
+    ├── Feedback loops
+    ├── Observability
+    ├── Hooks
+    ├── Linters
+    ├── Quality gates
+    └── Repo management
+</code></pre>
+<hr>
+<h2>3. Key architectural insight: who owns the harness</h2>
+<p>The two protocols realize the harness very differently. This drives the whole
+dependency order.</p>
+<ul>
+<li><strong>CLI agents already <em>are</em> a harness.</strong> <code>codex</code>, <code>claude</code>, etc. ship with
+tools, sandboxing, repo access, hooks, and an agent loop built in. Our harness
+for a CLI agent is <strong>a thin mapping of our <code>Harness</code> fields onto the CLI&#39;s
+flags/config</strong>. Cheap. Reuse over rebuild.</li>
+<li><strong>HTTP agents are a bare model.</strong> The API returns tokens; <em>we</em> must supply the
+loop, the tools, file access, guardrails, observability — i.e. we <strong>build the
+harness ourselves</strong>. Expensive.</li>
+</ul>
+<p>→ <strong>CLI protocol first</strong> (lean, leverages existing CLIs), <strong>HTTP protocol later</strong>
+(requires us to build an agent loop). The domain model is shared; the <em>adapter</em>
+behind it differs in weight.</p>
+<hr>
+<h2>4. Domain model</h2>
+<p>Lives in the <strong>extension host</strong> (Node) under <code>src/worker/</code>. The webview never
+spawns processes or holds credentials.</p>
+<pre><code class="language-ts">// src/worker/types.ts
+export type Company  = &quot;openai&quot; | &quot;anthropic&quot; | &quot;google&quot; | &quot;openrouter&quot; | &quot;nvidia&quot;;
+export type Protocol = &quot;cli&quot; | &quot;http&quot;;
+export type AuthMethod = &quot;apiKey&quot; | &quot;oauth2Pkce&quot; | &quot;oauth2&quot; | &quot;deviceCode&quot;;
+export type SandboxMode = &quot;read-only&quot; | &quot;workspace-write&quot; | &quot;danger-full-access&quot;;
+
+export interface SubProtocol {
+  authMethod: AuthMethod;
+  endpointUrl?: string;          // http only; cli resolves its own endpoint
+}
+
+export interface Agent {
+  company: Company;
+  protocol: Protocol;
+  subProtocol: SubProtocol;
+  model?: string;                // omit → let the CLI/API use its configured default
+  // Credentials are NOT stored on the Agent — resolved at run time from a
+  // CredentialSource (see §6) so secrets never sit in serialized config.
+  credentialRef?: string;        // opaque handle into the credential store
+}
+
+export interface Harness {
+  // Phase 1 fills only sandbox + workingDir; the rest are declared so the
+  // shape is stable as later phases light them up.
+  sandbox: SandboxMode;          // guardrails
+  workingDir: string;            // repo management
+  tools?: ToolSpec[];            // §5
+  guardrails?: GuardrailSpec;
+  feedbackLoops?: FeedbackSpec;
+  observability?: ObservabilitySpec;
+  hooks?: HookSpec[];
+  linters?: LinterSpec[];
+  qualityGates?: QualityGateSpec[];
+}
+
+export interface Worker {
+  id: string;
+  agent: Agent;
+  harness: Harness;
+}
+</code></pre>
+<p>Later-phase sub-types (<code>ToolSpec</code>, <code>GuardrailSpec</code>, …) are stubbed now and
+fleshed out in their phase. Declaring them keeps <code>Harness</code> stable.</p>
+<hr>
+<h2>5. Harness facets — full vision</h2>
+<p>Each facet, and how each protocol realizes it. CLI column = &quot;map to an existing
+flag/config&quot;; HTTP column = &quot;we build it&quot;.</p>
+<table>
+<thead>
+<tr>
+<th>Facet</th>
+<th>CLI realization (e.g. Codex)</th>
+<th>HTTP realization (we build)</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Tools</strong></td>
+<td>MCP servers (<code>codex mcp</code>), built-in tools</td>
+<td>Tool/function defs in the request; we dispatch + loop</td>
+</tr>
+<tr>
+<td><strong>Guardrails</strong></td>
+<td><code>-s/--sandbox</code>, <code>--add-dir</code>, approval mode</td>
+<td>Our pre/post validation around each tool call</td>
+</tr>
+<tr>
+<td><strong>Feedback loops</strong></td>
+<td>CLI&#39;s own agent loop</td>
+<td>Our loop: run → observe → re-prompt</td>
+</tr>
+<tr>
+<td><strong>Observability</strong></td>
+<td><code>--json</code> JSONL event stream</td>
+<td>We log every request/response/tool call</td>
+</tr>
+<tr>
+<td><strong>Hooks</strong></td>
+<td>CLI hook files + trust flags</td>
+<td>Our before/after callbacks in the loop</td>
+</tr>
+<tr>
+<td><strong>Linters</strong></td>
+<td>Run inside the agent&#39;s sandbox</td>
+<td>We invoke linters between turns, feed results back</td>
+</tr>
+<tr>
+<td><strong>Quality gates</strong></td>
+<td>Project rules / execpolicy</td>
+<td>We gate completion on tests/lint passing</td>
+</tr>
+<tr>
+<td><strong>Repo management</strong></td>
+<td><code>-C/--cd</code>, <code>--skip-git-repo-check</code>, <code>--add-dir</code></td>
+<td>We stage files, apply diffs, manage git ourselves</td>
+</tr>
+</tbody></table>
+<p><strong>Phase 1 implements only Guardrails (sandbox) + Repo management (workingDir)</strong>
+for the CLI protocol. Everything else is declared and deferred.</p>
+<hr>
+<h2>6. The Agent adapter abstraction</h2>
+<p>To support five companies × two protocols without branching everywhere, each
+(Company × Protocol) is a pluggable <strong>adapter</strong> behind one interface. The runner
+is adapter-agnostic.</p>
+<pre><code class="language-ts">// src/worker/adapters/types.ts
+export interface AgentAdapter {
+  readonly company: Company;
+  readonly protocol: Protocol;
+
+  // Which auth methods this (company × protocol) allows → constrains UI + validation.
+  allowedAuthMethods(): AuthMethod[];
+
+  // Translate a Worker into a concrete, runnable invocation.
+  //  - CLI adapters: returns argv + env (+ stdin) for child_process.spawn
+  //  - HTTP adapters: returns the request plan for the agent loop
+  buildInvocation(worker: Worker, task: string, creds: Credentials): Invocation;
+
+  // Normalize raw agent output into typed WorkerEvents the UI understands.
+  parseEvents(raw: AsyncIterable&lt;Buffer&gt;): AsyncIterable&lt;WorkerEvent&gt;;
+}
+</code></pre>
+<pre><code class="language-ts">// Normalized event stream — same shape regardless of company/protocol.
+export type WorkerEvent =
+  | { type: &quot;started&quot; }
+  | { type: &quot;agent-message&quot;; text: string }
+  | { type: &quot;tool-call&quot;; name: string; detail?: string }
+  | { type: &quot;log&quot;; level: &quot;info&quot; | &quot;warn&quot; | &quot;error&quot;; text: string }
+  | { type: &quot;done&quot;; lastMessage?: string }
+  | { type: &quot;error&quot;; message: string };
+</code></pre>
+<p><strong>Credential store</strong> — a small extension-host module that resolves a
+<code>credentialRef</code> into live <code>Credentials</code>. Phase 1: &quot;use the CLI&#39;s existing login&quot;
+(e.g. Codex&#39;s <code>~/.codex/auth.json</code>), so the store is a passthrough. Later:
+per-account dirs (<code>CODEX_HOME</code> / <code>CLAUDE_CONFIG_DIR</code>) and OAuth/PKCE flows.</p>
+<hr>
+<h2>7. Execution architecture</h2>
+<pre><code>Webview (React, sandboxed)                Extension host (Node)
+─────────────────────────                 ──────────────────────────────
+Worker config form  ──runTask──────────▶  panel.ts handler
+task input                                   │
+Run / Cancel                                 ▼
+                                          runWorker(worker, task, onEvent)
+                                             │  selects AgentAdapter
+                                             │  buildInvocation()
+                                             ▼
+                                          child_process.spawn (CLI)   ← Phase 1
+                                             │  stdout/stderr
+                                             ▼
+                                          adapter.parseEvents() → WorkerEvent
+output pane  ◀──taskEvent (per event)──────┘
+</code></pre>
+<ul>
+<li><strong>Runner</strong> (<code>src/worker/runner.ts</code>): <code>runWorker(worker, task, onEvent)</code> picks
+the adapter, builds the invocation, spawns/streams, emits normalized
+<code>WorkerEvent</code>s, returns a cancel handle (kills the process / aborts the loop).</li>
+<li><strong>Protocol</strong> (<code>src/webview/protocol.ts</code>) gains:<pre><code class="language-ts">WebviewToExtension += { type: &quot;runTask&quot;; worker: Worker; task: string }
+                    | { type: &quot;cancelTask&quot;; workerId: string }
+ExtensionToWebview += { type: &quot;taskEvent&quot;; workerId: string; event: WorkerEvent }
+</code></pre>
+</li>
+<li><strong>panel.ts</strong> routes <code>runTask</code> → <code>runWorker</code> → forwards each event as
+<code>taskEvent</code>; <code>cancelTask</code> → cancel handle.</li>
+</ul>
+<h3>Ground-truth: Codex CLI (verified, v0.142.2)</h3>
+<p>The first adapter targets <code>openai × cli</code>. Verified against the installed binary
+(do <strong>not</strong> trust the research doc — it had errors):</p>
+<ul>
+<li><code>codex exec [--json] -s &lt;mode&gt; -C &lt;dir&gt; [-m &lt;model&gt;] &quot;&lt;task&gt;&quot;</code> ✅</li>
+<li><code>--json</code> prints events as JSONL ✅ (there is <strong>no</strong> <code>--stream</code> flag — the doc
+was wrong; <code>--json</code> already streams)</li>
+<li><code>-o/--output-last-message &lt;FILE&gt;</code> writes the final message cleanly ✅</li>
+<li><code>-s/--sandbox</code> ∈ <code>{read-only, workspace-write, danger-full-access}</code> ✅</li>
+<li><code>-C/--cd &lt;DIR&gt;</code>, <code>--add-dir</code>, <code>--skip-git-repo-check</code>, <code>--ephemeral</code> ✅</li>
+<li><code>--ignore-user-config</code>, <code>--ignore-rules</code> ✅</li>
+<li>Multi-account via <code>CODEX_HOME</code> (auth uses <code>CODEX_HOME/auth.json</code>) ✅</li>
+<li>Auth: reuse existing <code>codex login</code> for Phase 1 (an <code>auth.json</code> is already
+present on this machine).</li>
+</ul>
+<p>Phase 1 invocation:</p>
+<pre><code>codex exec --json -s &lt;sandbox&gt; -C &lt;workingDir&gt; [-m &lt;model&gt;] &quot;&lt;task&gt;&quot;
+</code></pre>
+<hr>
+<h2>8. Company × Protocol × AuthMethod matrix</h2>
+<p>The constraint table the validation + UI are built from. <strong>Status</strong> flags how
+much is verified — anything not <code>verified</code> MUST be confirmed against the real
+tool/API before its phase is implemented (see §10).</p>
+<table>
+<thead>
+<tr>
+<th>Company</th>
+<th>Protocol</th>
+<th>Allowed AuthMethods</th>
+<th>Sub-protocols</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>openai</td>
+<td>cli</td>
+<td><code>oauth2Pkce</code> (ChatGPT login), <code>apiKey</code></td>
+<td>login vs API key</td>
+<td><strong>verified</strong> (codex 0.142.2)</td>
+</tr>
+<tr>
+<td>openai</td>
+<td>http</td>
+<td><code>apiKey</code> → <code>api.openai.com</code>; <code>oauth2</code> → ChatGPT backend (proxy)</td>
+<td>key vs token+proxy</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>anthropic</td>
+<td>cli</td>
+<td><code>oauth2</code> (<code>CLAUDE_CODE_OAUTH_TOKEN</code>)</td>
+<td>—</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>anthropic</td>
+<td>http</td>
+<td><code>apiKey</code> (<code>ANTHROPIC_API_KEY</code>) → <code>api.anthropic.com</code></td>
+<td>—</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>google</td>
+<td>cli</td>
+<td><code>oauth2</code> (browser), <code>apiKey</code></td>
+<td>—</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>google</td>
+<td>http</td>
+<td><code>apiKey</code>; <code>oauth2</code> (gcloud ADC)</td>
+<td>AI Studio vs Vertex</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>openrouter</td>
+<td>http</td>
+<td><code>apiKey</code> (<code>OPENROUTER_API_KEY</code>)</td>
+<td>—</td>
+<td>research-only</td>
+</tr>
+<tr>
+<td>nvidia</td>
+<td>http</td>
+<td><code>apiKey</code> (<code>NVIDIA_API_KEY</code>); self-hosted endpoint</td>
+<td>cloud vs self-host</td>
+<td>research-only</td>
+</tr>
+</tbody></table>
+<p>Notes carried from research (treat as hypotheses to verify):</p>
+<ul>
+<li>Model ids (<code>gpt-5.x</code>, <code>gemini-3.5-flash</code>, etc.) are <strong>unverified</strong> — never
+hardcode; default to &quot;omit model → let the agent use its configured default,&quot;
+and offer a free-text/model-list field.</li>
+<li>OpenAI HTTP <code>oauth2</code> sub-protocol needs a local proxy and hits an undocumented
+backend — fragile; lowest priority.</li>
+<li>Antigravity (<code>agy</code>) replacing Gemini CLI is unconfirmed; verify the actual CLI
+before building the <code>google × cli</code> adapter.</li>
+</ul>
+<hr>
+<h2>9. UI (webview)</h2>
+<p><code>src/webview/views/worker.tsx</code> — one view, reusing existing shadcn primitives.</p>
+<ul>
+<li><strong>Agent picker:</strong> Company <code>&lt;Select&gt;</code> → Protocol toggle (Cloud/Local) →
+(later: sub-protocol + auth + credentials). Phase 1: openai/cli only, auth =
+&quot;existing login&quot;.</li>
+<li><strong>Model:</strong> free-text / list input; empty = default (no <code>-m</code>).</li>
+<li><strong>Harness:</strong> sandbox <code>&lt;Select&gt;</code>; workingDir input. (Later phases add the other
+facets progressively.)</li>
+<li><strong>Task:</strong> <code>&lt;Textarea&gt;</code> + <strong>Run</strong> / <strong>Cancel</strong>.</li>
+<li><strong>Output pane:</strong> appends streamed <code>WorkerEvent</code>s (messages, tool calls, final).</li>
+</ul>
+<p>The <code>.temp/worker.png</code> provider sidebar (already prototyped as the Tree
+component) becomes the agent picker&#39;s home in a later phase.</p>
+<hr>
+<h2>10. Verification discipline (non-negotiable)</h2>
+<p>The research notes (<code>docs/research/how-to-use-agent.md</code>) are a <strong>starting point,
+not truth</strong> — already proven wrong on <code>--stream</code>. For every adapter, before
+implementing its phase:</p>
+<ol>
+<li>Confirm the CLI exists and its flags via <code>--help</code> (or the API shape via a
+real call) — capture verified facts in that phase&#39;s plan.</li>
+<li>Confirm allowed AuthMethods and the actual env vars / endpoint URLs.</li>
+<li>Never hardcode model ids without confirming they exist.</li>
+</ol>
+<p>Phase 1&#39;s Codex facts are already verified (§7).</p>
+<hr>
+<h2>11. Implementation order (by dependency)</h2>
+<p>Each phase = its own implementation plan. Earlier phases unblock later ones.</p>
+<p><strong>Phase 0 — Foundations (shared, no agent yet)</strong>
+<code>src/worker/types.ts</code> (full shape), <code>AgentAdapter</code> interface, <code>WorkerEvent</code>,
+runner skeleton + protocol messages, credential-store passthrough.
+<em>Unblocks everything.</em></p>
+<p><strong>Phase 1 — First Worker: <code>openai × cli</code> (the MVP)</strong>
+Codex adapter (<code>buildInvocation</code> + <code>parseEvents</code> for <code>--json</code>), minimal harness
+(sandbox + workingDir), runner spawns Codex, <code>worker.tsx</code> UI, end-to-end run +
+cancel + streamed output. <em>Proves the whole pipeline with verified facts.</em></p>
+<p><strong>Phase 2 — Second CLI agent: <code>anthropic × cli</code></strong>
+Validates the adapter abstraction across two CLIs; adds OAuth-token auth +
+per-account config dir. <em>Forces the abstraction to be real, not Codex-shaped.</em></p>
+<p><strong>Phase 3 — Harness depth (CLI)</strong>
+Light up more facets on the CLI protocol: observability (parse full event
+stream), hooks, tools/MCP, quality gates. <em>Where the &quot;better harness&quot; value
+compounds.</em></p>
+<p><strong>Phase 4 — First HTTP agent + the agent loop</strong>
+<code>anthropic × http</code> or <code>openrouter × http</code>: build the agent loop, tool dispatch,
+file access, observability — the harness we own. <em>Unlocks the Cloud protocol.</em></p>
+<p><strong>Phase 5 — Breadth</strong>
+Remaining companies/sub-protocols (<code>google</code>, <code>nvidia</code>, OpenAI HTTP oauth proxy),
+multi-account credential management, OAuth/PKCE/device-code flows.</p>
+<p>(Routing — task → best agent — is a <strong>separate</strong> capability beyond this spec; it
+consumes Workers produced here.)</p>
+<hr>
+<h2>12. Out of scope (this spec)</h2>
+<ul>
+<li>Routing / auto-selecting an agent for a task.</li>
+<li>Persisting worker configs across sessions (Phase 1 is in-memory; persistence
+can come with multi-account work).</li>
+<li>The Scrum-team orchestration layer (multiple Workers collaborating) — built on
+top of Workers later.</li>
+</ul>
+</body>
+</html>

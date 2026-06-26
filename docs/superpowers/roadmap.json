@@ -1,0 +1,11 @@
+[
+  {
+    "slug": "worker",
+    "title": "Worker (Agent + Harness)",
+    "status": "planned",
+    "spec": "specs/2026-06-26-worker-design.md",
+    "plan": null,
+    "created": "2026-06-26",
+    "completed": null
+  }
+]
