@@ -17,6 +17,7 @@ type CatalogFixture = {
 };
 
 const CACHE_FILE = "model-catalog.json";
+const SNAPSHOT_PATH = path.resolve(__dirname, "../../src/services/models.snapshot.json");
 
 const DISK_FIXTURE: CatalogFixture = {
   models: {
@@ -119,6 +120,20 @@ async function idsFor(
   return ids;
 }
 
+async function expectedSnapshotModels(company: Company): Promise<ModelInfo[]> {
+  const snapshot = JSON.parse(await fs.readFile(SNAPSHOT_PATH, "utf8")) as CatalogFixture;
+  const includeAll = company === "openrouter" || company === "nvidia";
+
+  return Object.entries(snapshot.models)
+    .filter(([, entry]) => includeAll || entry.owned_by === company)
+    .map(([id, entry]) => ({
+      id,
+      displayName: entry.display_name ?? id,
+      ownedBy: entry.owned_by ?? "",
+      aliases: entry.aliases ?? [],
+    }));
+}
+
 suite("model-catalog", () => {
   test("owner-filtered companies only return matching owned_by models", async () => {
     const ids = await idsFor("anthropic", {
@@ -168,14 +183,22 @@ suite("model-catalog", () => {
     assert.deepStrictEqual(model.aliases, []);
   });
 
-  test("malformed fetched JSON falls back without throwing", async () => {
-    const ids = await idsFor("anthropic", {
-      fetchText: JSON.stringify({ nope: 1 }),
-      diskText: null,
-      diskMtimeAgeMs: null,
-    });
+  test("malformed fetched JSON falls back to mapped snapshot data", async () => {
+    const expected = await expectedSnapshotModels("anthropic");
+    let models: ModelInfo[] = [];
 
-    assert.ok(ids.length > 0);
+    await withCatalogEnvironment(
+      {
+        fetchText: JSON.stringify({ nope: 1 }),
+        diskText: null,
+        diskMtimeAgeMs: null,
+      },
+      async ({ context }) => {
+        models = await getModelsByCompany(context, "anthropic");
+      },
+    );
+
+    assert.deepStrictEqual(models, expected);
   });
 
   test("fresh disk cache is used before fetch", async () => {
