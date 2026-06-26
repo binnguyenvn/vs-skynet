@@ -20,10 +20,10 @@
   {
     "slug": "model-catalog",
     "title": "Model Catalog (models by Company)",
-    "status": "planned",
+    "status": "done",
     "spec": "specs/2026-06-26-model-catalog-design.md",
     "plan": null,
     "created": "2026-06-26",
-    "completed": null
+    "completed": "2026-06-26"
   }
 ]

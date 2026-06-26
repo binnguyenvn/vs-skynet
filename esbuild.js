@@ -1,8 +1,11 @@
 const esbuild = require("esbuild");
+const fs = require("fs/promises");
 const path = require("path");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+const snapshotSource = path.resolve(__dirname, "src/services/models.snapshot.json");
+const snapshotTarget = path.resolve(__dirname, "dist/models.snapshot.json");
 
 /**
  * @type {import('esbuild').Plugin}
@@ -60,9 +63,13 @@ async function main() {
 	});
 
 	if (watch) {
+		await fs.mkdir(path.dirname(snapshotTarget), { recursive: true });
+		await fs.copyFile(snapshotSource, snapshotTarget);
 		await Promise.all([ctx.watch(), webviewCtx.watch()]);
 	} else {
 		await Promise.all([ctx.rebuild(), webviewCtx.rebuild()]);
+		await fs.mkdir(path.dirname(snapshotTarget), { recursive: true });
+		await fs.copyFile(snapshotSource, snapshotTarget);
 		await Promise.all([ctx.dispose(), webviewCtx.dispose()]);
 	}
 }
