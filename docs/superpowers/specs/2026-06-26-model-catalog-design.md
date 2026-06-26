@@ -138,6 +138,8 @@ getModelsByCompany(company)
 
 - **TTL: 24h.** A disk cache older than that triggers a fetch; if the fetch fails,
   the stale disk copy (or snapshot) is still used — staleness never blocks a call.
+  Once loaded, the catalog is held in memory for the remainder of the extension
+  session — the TTL governs only whether the initial load fetches or uses disk.
 - The fetched body is **validated with `zod`** (already a project dependency)
   before it's trusted or written to disk. Invalid body → treat as fetch failure →
   fall through to disk/snapshot. This stops an upstream schema break from poisoning
@@ -166,7 +168,7 @@ One npm script, no codegen:
 
 ```jsonc
 // package.json scripts
-"refresh:models": "curl -sSL https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json -o src/services/models.snapshot.json"
+"refresh:models": "curl -fsSL https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json -o src/services/models.snapshot.json"
 ```
 
 Run it manually when the snapshot drifts; commit the result.

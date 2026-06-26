@@ -16,7 +16,7 @@ const REMOTE_URL =
   "https://raw.githubusercontent.com/ENTERPILOT/ai-model-list/refs/heads/main/models.json";
 const CACHE_FILE = "model-catalog.json";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
-const FETCH_TIMEOUT_MS = 250;
+const FETCH_TIMEOUT_MS = 8_000;
 const AGGREGATORS = new Set<Company>(["openrouter", "nvidia"]);
 const EMPTY_CATALOG: RawCatalog = { models: {} };
 const catalogsByContext = new WeakMap<vscode.ExtensionContext, ModelCatalogService>();
