@@ -86,7 +86,8 @@ into Worker config; resolved at run time — see §6).</li>
 │   │       ├── AuthMethod        apiKey | oauth2Pkce | oauth2 | deviceCode
 │   │       ├── Endpoint URL
 │   │       └── Credentials       resolved at runtime, never stored
-│   └── Model                     the LLM the agent runs
+│   ├── Model                     the LLM the agent runs
+│   └── Tier                      capability class: fast | balanced | deep (§7.1)
 │
 ├── Harness                       the body — runtime control system
 │   ├── Agent loop                call model → dispatch tools → feed back → stop
@@ -126,6 +127,7 @@ export type Company  = &quot;openai&quot; | &quot;anthropic&quot; | &quot;google
 export type Protocol = &quot;cli&quot; | &quot;http&quot;;
 export type AuthMethod = &quot;apiKey&quot; | &quot;oauth2Pkce&quot; | &quot;oauth2&quot; | &quot;deviceCode&quot;;
 export type SandboxMode = &quot;read-only&quot; | &quot;workspace-write&quot; | &quot;danger-full-access&quot;;
+export type ModelTier = &quot;fast&quot; | &quot;balanced&quot; | &quot;deep&quot;;   // capability class (§7.1)
 
 export interface SubProtocol {
   authMethod: AuthMethod;
@@ -137,6 +139,7 @@ export interface Agent {
   protocol: Protocol;
   subProtocol: SubProtocol;
   model?: string;                // omit → CLI/API uses its configured default
+  tier?: ModelTier;              // groups peer agents for round-robin/fallback (§7.1)
   credentialRef?: string;        // opaque handle into the credential store (§6)
 }
 
@@ -154,6 +157,7 @@ export interface Soul {
   identity: string;              // one-line persona
   responsibilities: string[];    // what this role must do
   methodology?: string;          // how a pro in this role works
+  requiredTier?: ModelTier;      // role/task_type implies a minimum capability tier (§7.1)
 }
 
 export interface Worker {
@@ -269,12 +273,66 @@ export interface AgentAdapter {
   | { type: &quot;agent-message&quot;; text: string }
   | { type: &quot;tool-call&quot;; name: string; detail?: string }
   | { type: &quot;log&quot;; level: &quot;info&quot; | &quot;warn&quot; | &quot;error&quot;; text: string }
+  // worker needs human decisions — enumerated up front and surfaced as ONE batch
+  // (the Orchestrator gates on it, asks, and re-runs with answers — §7.2)
+  | { type: &quot;decision-request&quot;; questions: DecisionAsk[] }
   | { type: &quot;done&quot;; lastMessage?: string }
-  | { type: &quot;error&quot;; message: string };
+  | { type: &quot;error&quot;; message: string; transport?: boolean }; // transport=true → fallback-eligible (§7.1)
+
+export interface DecisionAsk {
+  question: string;
+  options?: { label: string; detail?: string }[];   // multiple-choice when applicable
+  context?: string;
+}
 </code></pre>
 <p><strong>Credential store</strong> — resolves a <code>credentialRef</code> into live <code>Credentials</code>. US-1:
 &quot;use the CLI&#39;s existing login&quot; (Codex <code>~/.codex/auth.json</code>) — a passthrough. Later:
 per-account dirs (<code>CODEX_HOME</code> / <code>CLAUDE_CONFIG_DIR</code>) and OAuth/PKCE/device flows.</p>
+<h3>7.1 Agent tiers, round-robin &amp; fallback</h3>
+<p>A task does not pick a <em>specific</em> agent — it picks a <strong>tier</strong> (capability class),
+and the system load-balances and fails over within/below it. (Pattern borrowed
+from LiteLLM <code>order</code>-based routing + OpenRouter failover.)</p>
+<ul>
+<li><strong>task_type → tier.</strong> A phase/soul declares a <code>requiredTier</code> (<code>fast | balanced | deep</code>). E.g. REVIEW/SPEC → <code>deep</code>; mechanical edits → <code>fast</code>.</li>
+<li><strong>Round-robin among peers.</strong> Agents are tagged with a <code>tier</code>. At run time an
+<strong><code>AgentPool</code></strong> returns the same-tier agents in round-robin order — spreads load
+/ rate limits across the user&#39;s equivalent agents.</li>
+<li><strong>Fallback down a tier.</strong> On a <strong>transport</strong> failure (<code>error.transport === true</code>
+— 429, auth, connection, unavailable), the pool advances to the next candidate:
+remaining same-tier peers first, then the next-lower tier. Each candidate gets
+its own retries before escalating. A <em>task</em> failure (bad output) does <strong>not</strong>
+fall back — it loops in the orchestrator, not the pool.</li>
+</ul>
+<pre><code class="language-ts">// resolved by the AgentPool (lives with Agent Management / Orchestrator)
+export interface AgentSelection {
+  tier: ModelTier;
+  policy: &quot;round-robin&quot; | &quot;weighted&quot;;
+  fallbackChain: Agent[];   // ordered candidates: same-tier peers, then lower tiers
+}
+</code></pre>
+<p>The runner takes the first candidate as <code>worker.agent</code> and the rest as a fallback
+chain; on a transport error it emits a <code>log</code>, advances, and only surfaces <code>error</code>
+when the chain is exhausted. (Tier tagging + the pool land in a later US — §12;
+US-1 runs a single explicitly-chosen agent with an empty chain.)</p>
+<blockquote>
+<p><strong>Not</strong> the same as <em>semantic</em> routing (understanding a task to pick the single
+best agent) — that stays out of scope (§13 / vision). This is mechanical
+tier-based load-balancing + failover.</p>
+</blockquote>
+<h3>7.2 Decision requests (batched, not chatty)</h3>
+<p>Workers surface human decisions as <strong>one batch up front</strong>, never as a drip of
+mid-run questions (researched from Kiro / GitHub Spec Kit <code>/clarify</code>: scan context
+→ enumerate the decision space → ask once → proceed in one pass). Mechanics:</p>
+<ul>
+<li>The soul instructs the agent to <strong>enumerate every decision it needs</strong> before
+doing the work, covering scope/constraints, ambiguity, implementation forks, and
+directional calls — then emit a single <code>decision-request</code>.</li>
+<li>The Orchestrator gates on it, asks the user (multiple-choice where possible),
+and <strong>re-runs the phase with the answers injected</strong>. No mid-process suspend (keeps
+CLI adapters simple; the worker is re-invoked, not paused in place).</li>
+<li>Mechanical ambiguity the worker can resolve itself (ponytail defaults) is <strong>not</strong>
+escalated — only genuine human-owned decisions.</li>
+</ul>
 <hr>
 <h2>8. Execution architecture</h2>
 <pre><code>Webview (React, sandboxed)                Extension host (Node)
@@ -453,16 +511,23 @@ soul injection. Unlocks the Cloud protocol.</p>
 <p><strong>US-6 — &quot;Use any provider / account.&quot;</strong>
 <em>Real deliverable:</em> remaining companies/sub-protocols (<code>google</code>, <code>nvidia</code>, OpenAI
 HTTP oauth proxy), multi-account credential management, OAuth/PKCE/device flows.</p>
-<p>(Routing — task → best Worker — is a <strong>separate</strong> capability beyond this spec; it
-consumes Workers produced here.)</p>
+<p><strong>US-7 — &quot;Don&#39;t make me pick one agent — load-balance across mine.&quot;</strong>
+<em>Real deliverable:</em> the <code>AgentPool</code> (§7.1) — tag agents with a tier, pick a task&#39;s
+tier, round-robin across same-tier peers, fall back down a tier on transport
+failure. The user assembles a Worker by <em>tier</em>, not a single fixed agent.
+(Naturally follows US-6 — needs several agents to balance across.)</p>
+<p>(<em>Semantic</em> routing — understanding a task to pick the single best Worker — is a
+<strong>separate</strong> capability beyond this spec. The tier-based round-robin/fallback in
+US-7 is mechanical, not semantic.)</p>
 <hr>
 <h2>13. Out of scope (this spec)</h2>
 <ul>
-<li>Routing / auto-selecting a Worker for a task.</li>
+<li><strong>Semantic</strong> routing — understanding a task to auto-select the single best
+Worker. (Tier-based round-robin/fallback <em>is</em> in scope — US-7, §7.1.)</li>
 <li>Persisting worker configs across sessions (US-1 is in-memory; persistence can
 arrive with multi-account work).</li>
 <li>The Scrum-team orchestration layer (multiple Workers collaborating) — built on
-top of Workers later.</li>
+top of Workers later (vision E4–E7).</li>
 </ul>
 </body>
 </html>

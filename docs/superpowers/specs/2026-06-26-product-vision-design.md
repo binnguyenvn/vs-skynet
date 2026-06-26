@@ -171,9 +171,24 @@ the right **soul**.
 - **Parallelism:** independent User Stories in BUILD fan out to multiple Developer
   Workers (mirrors `superpowers:dispatching-parallel-agents`), then converge at
   REVIEW.
-- **Agent assignment:** the user can map roles → agents during onboarding (e.g.
-  "Architect = Claude Code, Developers = Codex"). Auto-routing (best agent per
-  task) is **out of scope** for this vision — chosen explicitly here.
+### Agent assignment — by tier, not by hand-picking one agent
+
+The user does **not** wire each role to one fixed agent. Instead (per the
+[Worker spec §7.1](2026-06-26-worker-design.md) tier model, borrowed from LiteLLM
+`order` routing + OpenRouter failover):
+
+- **task_type → tier.** Each phase/soul declares a `requiredTier` (`fast |
+  balanced | deep`). E.g. SPEC/REVIEW → `deep`; mechanical BUILD edits → `fast`.
+- **Round-robin among peers.** The `AgentPool` returns same-tier agents in
+  round-robin order — spreads load and rate limits across the user's equivalent
+  agents (e.g. two `deep` agents alternate).
+- **Fallback down a tier.** On a transport failure (429/auth/connection), the pool
+  advances to remaining peers, then the next-lower tier, each with its own retries.
+
+During onboarding the user just **tags each agent with a tier** (or accepts a
+sensible default per model); the Orchestrator resolves the concrete agent per task.
+*Semantic* auto-routing (understanding a task to pick the single best agent) stays
+**out of scope** (§12).
 
 ---
 
@@ -188,7 +203,7 @@ interface Run {
   idea: string;
   currentNode: StateId;             // active macro state
   status: "running" | "paused" | "done" | "failed";
-  pendingQuestion?: PendingAsk;     // set when paused_to_ask (§8)
+  pendingQuestion?: PendingAsk[];   // a phase's whole batch, asked together (§8)
   history: StateTransition[];       // node, worker, started/ended, outcome
   artifacts: {                      // links to produced work
     specPath?: string; planPath?: string; branch?: string; prUrl?: string;
@@ -217,37 +232,56 @@ spec.
 ## 8. ⑤ pause_to_ask ↔ resume (durable human-in-the-loop)
 
 The mechanism that lets the system run autonomously yet defer the *decisive*
-questions to the human.
+questions to the human — **asked in batches, not as a chatty drip.**
+
+### Batching principle (researched: Kiro, GitHub Spec Kit `/clarify`)
+
+The worst failure mode is ask-run-ask-run — interrupting the human repeatedly.
+Similar spec-driven tools avoid it the same way, and so do we:
+
+1. **Scan context first.** A phase reads the workspace/spec before asking, so
+   questions are specific (stack, existing patterns), not generic.
+2. **Enumerate the decision space, then ask once.** A phase gathers *all* decisions
+   it needs and surfaces them as **one batched gate**, covering four dimensions:
+   **scope/constraints**, **ambiguity**, **implementation forks**, **directional
+   calls**. (This is the Worker `decision-request` event,
+   [Worker spec §7.2](2026-06-26-worker-design.md).)
+3. **Proceed in one pass.** Answers are recorded; the phase re-runs with them
+   injected and continues without further interruption — re-invoked, not paused
+   mid-process (keeps CLI adapters simple).
+4. **Only human-owned decisions.** Mechanical ambiguity is resolved by the Worker
+   itself (ponytail defaults), never escalated.
 
 ### Flow
 ```
-Worker/phase hits a decision it must not make
-   └─▶ emits pause_to_ask { question, options?, context }
-        └─▶ Orchestrator: run.status = "paused", persist pendingQuestion
-             └─▶ Panel surfaces the question (and notifies)
+Phase scans context → enumerates ALL its decisions
+   └─▶ emits one batched ask: PendingAsk[] (each: question, options?, context)
+        └─▶ Orchestrator: run.status = "paused", persist pendingQuestions
+             └─▶ Panel surfaces the batch as a decision form (and notifies)
                   └─▶ (may wait hours/days; survives restart)
-                       └─▶ User answers
-                            └─▶ Orchestrator injects the answer, resumes the
-                                paused Worker/phase from where it stopped
+                       └─▶ User answers all at once
+                            └─▶ Orchestrator injects answers, re-runs the phase
+                                with them and continues in one pass
 ```
 
 ### Properties
-- **Durable** — the pending question is part of persisted `Run`; closing VSCode and
-  reopening resumes the same prompt.
-- **Typed** — a `PendingAsk` carries a question, optional options (multiple
-  choice), and context, so the panel renders a real decision UI (not free chat).
-- **Scoped to decisions** — phases emit `pause_to_ask` only for human-owned calls
-  (scope, trade-offs, approach, merge). Mechanical ambiguity is resolved by the
-  Worker itself (ponytail defaults), not escalated.
-- **Auditable** — every ask + answer is recorded in `history`.
+- **Batched** — questions come as a set per phase, not one at a time.
+- **Durable** — the pending batch is part of persisted `Run`; closing VSCode and
+  reopening re-surfaces it.
+- **Typed** — each `PendingAsk` carries a question, optional multiple-choice
+  options, and context, so the panel renders a real decision form (not free chat).
+- **Scoped to decisions** — only human-owned calls (scope, trade-offs, approach,
+  merge). Mechanical ambiguity → resolved by the Worker (ponytail defaults).
+- **Auditable** — every ask + answer recorded in `history`.
 
 ```ts
-interface PendingAsk {
+interface PendingAsk {                                 // one decision in a batch
   fromNode: StateId;
   question: string;
-  options?: { label: string; detail?: string }[];   // multiple-choice when applicable
+  options?: { label: string; detail?: string }[];      // multiple-choice when applicable
   context?: string;
 }
+// run.pendingQuestion holds PendingAsk[] — a whole phase's batch, asked together.
 ```
 
 ---
@@ -299,7 +333,7 @@ US discipline — no types-only epics).
 | **E4 — Orchestrator (linear)** | idea → a single-path run GROOM→…→SHIP on one Developer Worker (no fan-out yet), with mandatory REVIEW/VERIFY gates | E1–E3 |
 | **E5 — Run State Machine + Panel** | live node visualization of a run; durable run-state across restart | E4 |
 | **E6 — pause_to_ask ↔ resume** | durable decision gates; user answers, run resumes | E4–E5 |
-| **E7 — Multi-worker Scrum team** | role→agent mapping + parallel BUILD fan-out/converge | E3–E6 |
+| **E7 — Multi-worker Scrum team** | tier-tagged agents + `AgentPool` (round-robin/fallback) + parallel BUILD fan-out/converge | E3–E6 |
 | **E8 — Breadth** | HTTP agents, more companies, multi-account, richer harness (observability/verification depth) | E1–E7 |
 
 (E1's internal US slicing is in the Worker spec. E4–E7 are where this vision's
@@ -309,9 +343,10 @@ unique value — the autonomous, observable, durable Scrum team — comes online
 
 ## 12. Out of scope (this vision)
 
-- **Auto-routing** (task → best agent/Worker automatically). The user maps roles →
-  agents explicitly. Routing is a separate future capability that *consumes* this
-  system.
+- **Semantic auto-routing** (understanding a task to pick the single best
+  agent/Worker). Agents are chosen by **tier** with round-robin + fallback (§6,
+  Worker §7.1), not by semantic task understanding — that stays a separate future
+  capability that *consumes* this system.
 - **Cloud/remote execution** of the team (everything runs on the user's machine via
   their agents).
 - **Team collaboration across users** (single-developer experience first).
