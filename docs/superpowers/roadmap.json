@@ -1,7 +1,16 @@
 [
   {
+    "slug": "product-vision",
+    "title": "Skynet product vision (north-star)",
+    "status": "planned",
+    "spec": "specs/2026-06-26-product-vision-design.md",
+    "plan": null,
+    "created": "2026-06-26",
+    "completed": null
+  },
+  {
     "slug": "worker",
-    "title": "Worker (Agent + Harness)",
+    "title": "Worker (Agent + Harness + Soul)",
     "status": "planned",
     "spec": "specs/2026-06-26-worker-design.md",
     "plan": null,

@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Skynet — Product Vision</title>
+<style>
+  body { font: 16px/1.6 system-ui, sans-serif; margin: 2rem auto; max-width: 880px; padding: 0 1.25rem; color: #1a1a1a; }
+  h1 { margin: 0 0 .5rem; } h2 { margin-top: 2.2rem; border-bottom: 1px solid #eee; padding-bottom: .3rem; }
+  h3 { margin-top: 1.6rem; }
+  code { background: #f4f4f5; padding: .1rem .35rem; border-radius: 4px; font-size: .9em; }
+  pre { background: #1e1e2e; color: #e4e4e7; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .45rem .7rem; border: 1px solid #e4e4e7; vertical-align: top; }
+  th { background: #fafafa; }
+  blockquote { border-left: 3px solid #c4b5fd; margin: 1rem 0; padding: .25rem 1rem; color: #555; background: #faf9ff; }
+  a { color: #2563eb; text-decoration: none; } a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<h1>Skynet — Product Vision</h1>
+<p><strong>Date:</strong> 2026-06-26
+<strong>Status:</strong> Draft — north-star vision (umbrella over per-subsystem specs)</p>
+<blockquote>
+<p>This is the <strong>north-star</strong> for the whole extension. It defines the end-state
+product and how its subsystems fit together. It is the umbrella; each subsystem
+has (or will have) its own spec — the <strong><a href="2026-06-26-worker-design.md">Worker</a></strong>
+spec is the first child. This document is intentionally broad; detail lives in
+child specs. Build order is an epic list at the end.</p>
+</blockquote>
+<hr>
+<h2>1. North star — the end-state experience</h2>
+<p>A developer opens VSCode and, once onboarded, hands Skynet an <strong>idea</strong>. Skynet
+runs a full software-delivery workflow as an orchestrated AI <strong>Scrum team</strong>,
+pausing only to ask the few <strong>decisions that genuinely need a human</strong>. The output
+is a <strong>real, shippable product</strong> — built with discipline, tested, reviewed — <strong>not
+a pile of slop carrying a ton of tech-debt</strong>.</p>
+<p>The golden path:</p>
+<pre><code>Onboard once ─▶ Add every agent you own ─▶ Give an idea
+        ─▶ Answer the decisive questions (only those)
+        ─▶ Watch the Scrum team execute (live state machine)
+        ─▶ Receive a real product (spec&#39;d, built, tested, reviewed)
+</code></pre>
+<p>Two promises define success:</p>
+<ol>
+<li><strong>Effortless after onboarding</strong> — the human supplies <em>intent and decisions</em>, not
+labor. Everything mechanical is the team&#39;s job.</li>
+<li><strong>Quality is structural, not optional</strong> — the workflow <em>cannot</em> reach &quot;shipped&quot;
+without passing review and verification. Anti-tech-debt is built into the
+machine, not left to discipline.</li>
+</ol>
+<hr>
+<h2>2. Product principles</h2>
+<ul>
+<li><strong>Human supplies intent; the team supplies labor.</strong> Pause only for decisions a
+machine shouldn&#39;t make (scope, trade-offs, product calls).</li>
+<li><strong>No slop, by construction.</strong> Review + verification are mandatory gates on the
+path to ship. A run can&#39;t skip them. (Mirrors superpowers&#39; own
+brainstorm→spec→plan→TDD→review discipline, plus ponytail minimalism: smallest
+correct change, YAGNI, no unrequested abstractions.)</li>
+<li><strong>Every run is durable.</strong> A run survives VSCode restarts; a pause can wait hours
+or days and resume exactly where it stopped.</li>
+<li><strong>The work is observable.</strong> The user always sees which node is active, what each
+Worker is doing, and what&#39;s blocking.</li>
+<li><strong>Reuse over rebuild.</strong> Orchestrator phases delegate to existing superpowers
+skills where they exist; Skynet only builds what&#39;s missing (e.g. SHIP).</li>
+<li><strong>Secrets stay safe.</strong> Credentials live in VSCode SecretStorage; CLI logins are
+referenced, never copied.</li>
+</ul>
+<hr>
+<h2>3. System map</h2>
+<p>Five subsystems. The <strong>Worker</strong> is the executor unit (own spec); the other four
+make it a product.</p>
+<pre><code>┌──────────────────────────────────────────────────────────────────┐
+│ Skynet (VSCode extension)                                          │
+│                                                                    │
+│  ① Agent Management        ② Worker            ③ Orchestrator      │
+│  CRUD + auth flow          Agent+Harness+Soul  hybrid state machine│
+│  SecretStorage             (the executor)      multi-worker team   │
+│        │                        ▲                    │             │
+│        │ provides agents        │ assembles &amp;        │ drives      │
+│        ▼                        │ runs Workers        ▼            │
+│  credential store ──────────────┘            ④ Run State Machine   │
+│                                               + Panel (live nodes) │
+│                                                      │             │
+│                                               ⑤ pause_to_ask ↔     │
+│                                                  resume (durable)  │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre>
+<ul>
+<li><strong>① Agent Management</strong> — onboard and CRUD the agents the user owns; handle each
+AuthMethod&#39;s flow; store secrets safely.</li>
+<li><strong>② Worker</strong> — <code>Agent + Harness + Soul</code>; the thing that actually does a unit of
+work. See the <a href="2026-06-26-worker-design.md">Worker spec</a>.</li>
+<li><strong>③ Orchestrator</strong> — the &quot;big workflow like superpowers&quot;; a hybrid state machine
+that assigns phases to a multi-worker Scrum team.</li>
+<li><strong>④ Run State Machine + Panel</strong> — the durable run, visualized live (active node).</li>
+<li><strong>⑤ pause_to_ask ↔ resume</strong> — human-in-the-loop decision gates, durable.</li>
+</ul>
+<hr>
+<h2>4. ① Agent Management (CRUD + authentication)</h2>
+<p>The onboarding surface: the user adds <strong>every agent they own</strong> once, then forgets
+about it.</p>
+<h3>CRUD</h3>
+<ul>
+<li><strong>Create</strong> — pick Company → Protocol (Cloud/Local) → sub-protocol/AuthMethod →
+run the auth flow → name it → saved.</li>
+<li><strong>Read/List</strong> — the provider sidebar (<code>.temp/worker.png</code>, already prototyped as
+the <strong>Tree</strong> component): CLOUD/LOCAL groups, provider rows, live status dots.</li>
+<li><strong>Update</strong> — rotate credentials, rename, change default model.</li>
+<li><strong>Delete</strong> — remove agent + purge its secret.</li>
+</ul>
+<h3>Authentication flows (per AuthMethod)</h3>
+<ul>
+<li><strong>apiKey</strong> — paste key → validate with a cheap probe call → store in
+SecretStorage.</li>
+<li><strong>oauth2Pkce</strong> — browser PKCE flow → capture token → store.</li>
+<li><strong>oauth2</strong> — token paste or browser flow (e.g. <code>CLAUDE_CODE_OAUTH_TOKEN</code>).</li>
+<li><strong>deviceCode</strong> — show code, poll until authorized.</li>
+<li><strong>CLI logins</strong> — for Local agents already logged in (<code>codex login</code>,
+<code>claude</code>), <strong>reference</strong> the existing login (<code>CODEX_HOME</code> /
+<code>CLAUDE_CONFIG_DIR</code>); do not copy the secret out.</li>
+</ul>
+<p>Allowed methods per (Company × Protocol) come from the matrix in the
+<a href="2026-06-26-worker-design.md">Worker spec §9</a>. <strong>Verify each flow against the real
+tool before building it</strong> (the research notes are hypotheses — already wrong once).</p>
+<h3>Storage</h3>
+<ul>
+<li>HTTP keys/tokens → <code>context.secrets</code> (VSCode SecretStorage, encrypted).</li>
+<li>CLI agents → a reference to the login dir, resolved at run time by the Worker&#39;s
+credential store. Worker config stores only a <code>credentialRef</code>, never a secret.</li>
+</ul>
+<hr>
+<h2>5. ② Worker (link)</h2>
+<p>The executor. Fully specified in <strong><a href="2026-06-26-worker-design.md">2026-06-26-worker-design.md</a></strong>:
+<code>Worker = Agent + Harness + Soul</code>. The Orchestrator assembles Workers (picking the
+agent + soul per phase) and runs them via the same <code>runWorker</code> runner + normalized
+<code>WorkerEvent</code> stream defined there. No duplication here.</p>
+<hr>
+<h2>6. ③ Orchestrator — the big workflow (hybrid state machine)</h2>
+<p>A <strong>native state machine</strong> whose phases <strong>delegate to superpowers skills</strong> where
+they exist, and run <strong>Skynet-native handlers</strong> where they don&#39;t (e.g. SHIP). Phases
+are assigned to a <strong>multi-worker Scrum team</strong> — each phase runs on a Worker wearing
+the right <strong>soul</strong>.</p>
+<h3>Macro states (the delivery workflow)</h3>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Worker / soul</th>
+<th>Handler</th>
+<th>Emits decisions?</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>IDEATE</strong></td>
+<td>(human)</td>
+<td>capture the idea</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>GROOM</strong></td>
+<td>PM</td>
+<td>delegate <code>superpowers:brainstorming</code></td>
+<td><strong>yes</strong> (scope/req)</td>
+</tr>
+<tr>
+<td><strong>SPEC</strong></td>
+<td>Architect</td>
+<td>brainstorming → design doc</td>
+<td><strong>yes</strong> (approach)</td>
+</tr>
+<tr>
+<td><strong>PLAN</strong></td>
+<td>Architect/Lead</td>
+<td>delegate <code>superpowers:writing-plans</code></td>
+<td>sometimes</td>
+</tr>
+<tr>
+<td><strong>BUILD</strong></td>
+<td>Developer(s)</td>
+<td>delegate <code>superpowers:test-driven-development</code> / <code>executing-plans</code>; <strong>fan out per US</strong></td>
+<td>rarely</td>
+</tr>
+<tr>
+<td><strong>REVIEW</strong></td>
+<td>Reviewer</td>
+<td>delegate <code>superpowers:requesting-code-review</code></td>
+<td>rarely</td>
+</tr>
+<tr>
+<td><strong>VERIFY</strong></td>
+<td>QA</td>
+<td>delegate <code>superpowers:verification-before-completion</code></td>
+<td>rarely</td>
+</tr>
+<tr>
+<td><strong>SHIP</strong></td>
+<td>Lead</td>
+<td><strong>Skynet-native</strong> (branch/PR/merge; partial <code>superpowers:finishing-a-development-branch</code>)</td>
+<td>yes (merge/PR)</td>
+</tr>
+</tbody></table>
+<h3>Quality gates (the anti-tech-debt machine)</h3>
+<ul>
+<li><strong>REVIEW</strong> and <strong>VERIFY</strong> are <strong>mandatory</strong> — there is no edge from BUILD to SHIP
+that bypasses them. Failures loop back to BUILD with the findings.</li>
+<li>BUILD uses <strong>TDD</strong> (tests first) and <strong>ponytail</strong> minimalism (smallest correct
+change, YAGNI). The structure makes &quot;a ton of tech-debt&quot; hard to produce, not
+merely discouraged.</li>
+<li>A run reaches <strong>SHIP only when</strong> the plan is complete, tests pass, and review is
+clean — enforced by the state machine, not by hope.</li>
+</ul>
+<h3>Multi-worker Scrum team</h3>
+<ul>
+<li>The Orchestrator owns a <strong>team</strong>: a Worker per role (PM, Architect, Developer,
+Reviewer, QA), each a soul over a chosen agent.</li>
+<li><strong>Parallelism:</strong> independent User Stories in BUILD fan out to multiple Developer
+Workers (mirrors <code>superpowers:dispatching-parallel-agents</code>), then converge at
+REVIEW.</li>
+<li><strong>Agent assignment:</strong> the user can map roles → agents during onboarding (e.g.
+&quot;Architect = Claude Code, Developers = Codex&quot;). Auto-routing (best agent per
+task) is <strong>out of scope</strong> for this vision — chosen explicitly here.</li>
+</ul>
+<hr>
+<h2>7. ④ Run State Machine + Panel</h2>
+<h3>Run state (durable)</h3>
+<p>A run is a persisted object — survives VSCode restart:</p>
+<pre><code class="language-ts">interface Run {
+  id: string;
+  idea: string;
+  currentNode: StateId;             // active macro state
+  status: &quot;running&quot; | &quot;paused&quot; | &quot;done&quot; | &quot;failed&quot;;
+  pendingQuestion?: PendingAsk;     // set when paused_to_ask (§8)
+  history: StateTransition[];       // node, worker, started/ended, outcome
+  artifacts: {                      // links to produced work
+    specPath?: string; planPath?: string; branch?: string; prUrl?: string;
+  };
+  team: Record&lt;Role, { agentRef: string; soul: string }&gt;;
+}
+</code></pre>
+<p>Persisted to disk (workspace storage). On reload, the panel rehydrates and, if
+<code>status === &quot;paused&quot;</code>, re-surfaces <code>pendingQuestion</code>.</p>
+<h3>Panel (live visualization)</h3>
+<p>A webview rendering the state machine as a graph/flow:</p>
+<ul>
+<li>Nodes = macro states; <strong>active node highlighted</strong>, done nodes checked, failed
+nodes flagged.</li>
+<li>Each active node shows its Worker (role + agent) and streamed <code>WorkerEvent</code>s
+(the same event stream the Worker spec defines).</li>
+<li>Parallel BUILD shows sub-lanes (one per Developer Worker / US).</li>
+<li>A paused node shows the pending question inline with a <strong>Resume</strong> affordance.</li>
+</ul>
+<p>Built from existing shadcn primitives + the Tree component; the run graph may use a
+simple flow layout (nodes + edges) — exact rendering decided in the panel&#39;s child
+spec.</p>
+<hr>
+<h2>8. ⑤ pause_to_ask ↔ resume (durable human-in-the-loop)</h2>
+<p>The mechanism that lets the system run autonomously yet defer the <em>decisive</em>
+questions to the human.</p>
+<h3>Flow</h3>
+<pre><code>Worker/phase hits a decision it must not make
+   └─▶ emits pause_to_ask { question, options?, context }
+        └─▶ Orchestrator: run.status = &quot;paused&quot;, persist pendingQuestion
+             └─▶ Panel surfaces the question (and notifies)
+                  └─▶ (may wait hours/days; survives restart)
+                       └─▶ User answers
+                            └─▶ Orchestrator injects the answer, resumes the
+                                paused Worker/phase from where it stopped
+</code></pre>
+<h3>Properties</h3>
+<ul>
+<li><strong>Durable</strong> — the pending question is part of persisted <code>Run</code>; closing VSCode and
+reopening resumes the same prompt.</li>
+<li><strong>Typed</strong> — a <code>PendingAsk</code> carries a question, optional options (multiple
+choice), and context, so the panel renders a real decision UI (not free chat).</li>
+<li><strong>Scoped to decisions</strong> — phases emit <code>pause_to_ask</code> only for human-owned calls
+(scope, trade-offs, approach, merge). Mechanical ambiguity is resolved by the
+Worker itself (ponytail defaults), not escalated.</li>
+<li><strong>Auditable</strong> — every ask + answer is recorded in <code>history</code>.</li>
+</ul>
+<pre><code class="language-ts">interface PendingAsk {
+  fromNode: StateId;
+  question: string;
+  options?: { label: string; detail?: string }[];   // multiple-choice when applicable
+  context?: string;
+}
+</code></pre>
+<hr>
+<h2>9. End-to-end golden path (worked example)</h2>
+<pre><code>1. ONBOARD  user adds: Codex (openai/cli), Claude Code (anthropic/cli),
+            an OpenRouter key. Maps roles → agents.
+2. IDEATE   &quot;Build a CLI that converts CSV to a SQLite DB.&quot;
+3. GROOM    PM-worker runs brainstorming → pause_to_ask:
+              &quot;Overwrite existing tables or append?&quot; → user: &quot;append&quot;
+4. SPEC     Architect-worker writes the design doc → pause_to_ask:
+              &quot;Streaming parse (big files) or load-all (simpler)?&quot; → &quot;streaming&quot;
+5. PLAN     Architect-worker writes the implementation plan (US-sliced)
+6. BUILD    2 Developer-workers fan out across independent US (TDD)
+7. REVIEW   Reviewer-worker runs code review → finds 1 issue → loops to BUILD
+            → fixed → review clean
+8. VERIFY   QA-worker runs the build + tests → all green
+9. SHIP     Lead-worker opens a PR (Skynet-native) → pause_to_ask:
+              &quot;Merge to main or leave PR for you?&quot; → user decides
+→ Output: a real, tested CLI tool on a clean branch. No tech-debt pile.
+</code></pre>
+<hr>
+<h2>10. Persistence &amp; data model (summary)</h2>
+<ul>
+<li><strong>Agents</strong> — config (company/protocol/auth/model/credentialRef) in extension
+storage; secrets in SecretStorage.</li>
+<li><strong>Runs</strong> — durable <code>Run</code> objects in workspace storage (per project).</li>
+<li><strong>Artifacts</strong> — specs/plans live in the repo (<code>docs/superpowers/...</code>); branches/PRs
+in git; the <code>Run</code> holds links.</li>
+<li><strong>Souls</strong> — the role library (<code>src/worker/souls/</code>), shipped with the extension.</li>
+</ul>
+<hr>
+<h2>11. Epic decomposition &amp; build order</h2>
+<p>The vision decomposes into epics; each gets its own spec → plan → implementation.
+Ordered by dependency. <strong>Every epic ships something REAL</strong> (per the Worker spec&#39;s
+US discipline — no types-only epics).</p>
+<table>
+<thead>
+<tr>
+<th>Epic</th>
+<th>Real deliverable</th>
+<th>Depends on</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>E1 — Worker</strong></td>
+<td>a single runnable Worker (developer soul, Codex) executes a task end-to-end</td>
+<td>— (in progress; own spec)</td>
+</tr>
+<tr>
+<td><strong>E2 — Agent Management</strong></td>
+<td>onboard/add/list agents with real auth flows + SecretStorage; the provider sidebar</td>
+<td>E1 (Worker consumes agents)</td>
+</tr>
+<tr>
+<td><strong>E3 — Soul library &amp; roles</strong></td>
+<td>pick PM/Architect/Developer/Reviewer/QA souls</td>
+<td>E1</td>
+</tr>
+<tr>
+<td><strong>E4 — Orchestrator (linear)</strong></td>
+<td>idea → a single-path run GROOM→…→SHIP on one Developer Worker (no fan-out yet), with mandatory REVIEW/VERIFY gates</td>
+<td>E1–E3</td>
+</tr>
+<tr>
+<td><strong>E5 — Run State Machine + Panel</strong></td>
+<td>live node visualization of a run; durable run-state across restart</td>
+<td>E4</td>
+</tr>
+<tr>
+<td><strong>E6 — pause_to_ask ↔ resume</strong></td>
+<td>durable decision gates; user answers, run resumes</td>
+<td>E4–E5</td>
+</tr>
+<tr>
+<td><strong>E7 — Multi-worker Scrum team</strong></td>
+<td>role→agent mapping + parallel BUILD fan-out/converge</td>
+<td>E3–E6</td>
+</tr>
+<tr>
+<td><strong>E8 — Breadth</strong></td>
+<td>HTTP agents, more companies, multi-account, richer harness (observability/verification depth)</td>
+<td>E1–E7</td>
+</tr>
+</tbody></table>
+<p>(E1&#39;s internal US slicing is in the Worker spec. E4–E7 are where this vision&#39;s
+unique value — the autonomous, observable, durable Scrum team — comes online.)</p>
+<hr>
+<h2>12. Out of scope (this vision)</h2>
+<ul>
+<li><strong>Auto-routing</strong> (task → best agent/Worker automatically). The user maps roles →
+agents explicitly. Routing is a separate future capability that <em>consumes</em> this
+system.</li>
+<li><strong>Cloud/remote execution</strong> of the team (everything runs on the user&#39;s machine via
+their agents).</li>
+<li><strong>Team collaboration across users</strong> (single-developer experience first).</li>
+<li><strong>Billing/cost optimization</strong> across providers.</li>
+</ul>
+<hr>
+<h2>13. Risks &amp; open questions</h2>
+<ul>
+<li><strong>Autonomy vs. trust</strong> — how much the team does before pausing. Mitigation:
+conservative <code>pause_to_ask</code> defaults early; loosen as trust builds.</li>
+<li><strong>Superpowers coupling</strong> — delegating to superpowers skills ties us to their
+interface. Mitigation: the hybrid design isolates delegation behind phase
+handlers, so a skill can be swapped for a native handler.</li>
+<li><strong>Long-running durability</strong> — resuming a half-done BUILD correctly after restart
+is the hardest part; E5/E6 must treat resume as a first-class case, not a bolt-on.</li>
+<li><strong>Verification discipline</strong> — the whole value rests on REVIEW/VERIFY being real
+gates. They must run actual tests/reviews with evidence, never rubber-stamp.</li>
+</ul>
+</body>
+</html>
