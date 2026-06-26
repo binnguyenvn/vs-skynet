@@ -1,14 +1,14 @@
 # Worker — Design
 
 **Date:** 2026-06-26
-**Status:** Draft — full vision spec (implementation sliced into User Stories)
+**Status:** Draft — full vision spec (implementation sliced into Epics)
 
 > Big-picture spec for the **Worker** — Skynet's core unit and the single
 > strongest capability of this extension. It describes the whole system, not just
-> the first slice. Work is sliced into **User Stories (US)** at the end; **every US
-> ships something REAL** (a usable Worker capability). Types/utils/adapters are the
-> supporting cast that comes along with the REAL thing — never a US on their own.
-> Scope is intentionally *not* trimmed; the MVP is just US-1.
+> the first slice. Work is sliced into **Epics** at the end; **every epic ships
+> something REAL** (a usable Worker capability). Types/utils/adapters are the
+> supporting cast that comes along with the REAL thing — never an epic on their own.
+> Scope is intentionally *not* trimmed; the MVP is just Epic 1.
 
 ---
 
@@ -164,7 +164,7 @@ export interface Worker {
 ```
 
 Later-phase sub-types (`ToolSpec`, `ObservabilitySpec`, `VerificationSpec`) are
-declared now, fleshed out in their US, so `Harness` stays stable.
+declared now, fleshed out in their epic, so `Harness` stays stable.
 
 ---
 
@@ -183,9 +183,9 @@ agent reliable. Each facet, and how each protocol realizes it:
 | **Verification** | project rules / execpolicy + our gate | we gate "done" on lint/test passing |
 | **Repo / sandbox** | `-C/--cd`, `--add-dir`, `--skip-git-repo-check` | we stage files, apply diffs, manage git |
 
-**US-1 configures** Guardrails (sandbox) + Repo (workingDir) on the CLI protocol,
+**Epic 1 configures** Guardrails (sandbox) + Repo (workingDir) on the CLI protocol,
 riding the CLI's built-in loop/tools/memory. Observability and Verification light
-up in later US.
+up in Epic 2.
 
 ---
 
@@ -218,7 +218,7 @@ ships as a small library and injects into the agent.
 - **HTTP** — rendered into the **system prompt** of every request.
 
 Souls are **data**, not code — a `src/worker/souls/` library (developer first;
-reviewer, qa, etc. added in US-2). New role = new soul file.
+reviewer, qa, etc. added across Epic 3). New role = new soul file.
 
 ---
 
@@ -264,9 +264,9 @@ export interface DecisionAsk {
 }
 ```
 
-**Credential store** — resolves a `credentialRef` into live `Credentials`. US-1:
-"use the CLI's existing login" (Codex `~/.codex/auth.json`) — a passthrough. Later:
-per-account dirs (`CODEX_HOME` / `CLAUDE_CONFIG_DIR`) and OAuth/PKCE/device flows.
+**Credential store** — resolves a `credentialRef` into live `Credentials`. Epic 1:
+"use the CLI's existing login" (Codex `~/.codex/auth.json`) — a passthrough. Later
+(Epic 6): per-account dirs (`CODEX_HOME` / `CLAUDE_CONFIG_DIR`) and OAuth/PKCE/device flows.
 
 ### 7.1 Agent tiers, round-robin & fallback
 
@@ -296,8 +296,8 @@ export interface AgentSelection {
 
 The runner takes the first candidate as `worker.agent` and the rest as a fallback
 chain; on a transport error it emits a `log`, advances, and only surfaces `error`
-when the chain is exhausted. (Tier tagging + the pool land in a later US — §12;
-US-1 runs a single explicitly-chosen agent with an empty chain.)
+when the chain is exhausted. (Tier tagging + the pool land in a later epic — §12;
+Epic 1 runs a single explicitly-chosen agent with an empty chain.)
 
 > **Not** the same as *semantic* routing (understanding a task to pick the single
 > best agent) — that stays out of scope (§13 / vision). This is mechanical
@@ -333,7 +333,7 @@ Run / Cancel                                 │  select AgentAdapter
                                              │  buildInvocation()  (renders soul,
                                              │                       configures harness)
                                              ▼
-                                          child_process.spawn (CLI)   ← US-1
+                                          child_process.spawn (CLI)   ← Epic 1
                                              │  stdout/stderr
                                              ▼
                                           adapter.parseEvents() → WorkerEvent
@@ -363,12 +363,12 @@ research doc had errors — do not trust it):
 - `-s/--sandbox` ∈ `{read-only, workspace-write, danger-full-access}` ✅
 - `-C/--cd <DIR>`, `--add-dir`, `--skip-git-repo-check`, `--ephemeral` ✅
 - `-c key=value` config override (candidate soul-injection channel) ✅ — exact soul
-  mechanism (`-c` instructions vs temp `AGENTS.md`) confirmed in US-1
-- Multi-account via `CODEX_HOME`; auth reuses existing `codex login` for US-1 ✅
+  mechanism (`-c` instructions vs temp `AGENTS.md`) confirmed in Epic 3
+- Multi-account via `CODEX_HOME`; auth reuses existing `codex login` for Epic 1 ✅
 
-US-1 invocation shape:
+Epic 1 invocation shape (no soul injection — that arrives in Epic 3):
 ```
-codex exec --json -s <sandbox> -C <workingDir> [-m <model>] <soul-injection> "<task>"
+codex exec --json -s <sandbox> -C <workingDir> [-m <model>] "<task>"
 ```
 
 ---
@@ -404,14 +404,14 @@ Gemini CLI is unconfirmed — verify before building `google × cli`.
 - **Soul picker:** role `<Select>` (developer first). Shows the role's
   responsibilities/methodology.
 - **Agent picker:** Company `<Select>` → Protocol toggle (Cloud/Local) → (later:
-  sub-protocol + auth + credentials). US-1: openai/cli, auth = "existing login."
+  sub-protocol + auth + credentials). Epic 1: openai/cli, auth = "existing login."
 - **Model:** free-text/list; empty = default (no `-m`).
 - **Harness config:** sandbox `<Select>`; workingDir input. (More facets per US.)
 - **Task:** `<Textarea>` + **Run** / **Cancel**.
 - **Output pane:** appends streamed `WorkerEvent`s.
 
 The `.temp/worker.png` provider sidebar (already prototyped as the Tree component)
-becomes the agent picker's home in a later US.
+becomes the agent picker's home in a later epic.
 
 ---
 
@@ -426,63 +426,83 @@ not truth** — already proven wrong on `--stream`. For every adapter, before it
 3. Confirm the soul-injection channel (instruction file vs system prompt vs config).
 4. Never hardcode model ids without confirming they exist.
 
-US-1's Codex facts are already verified (§8).
+Epic 1's Codex facts are already verified (§8).
 
 ---
 
-## 12. Implementation as User Stories (each ships something REAL)
+## 12. Implementation as Epics (each ships something REAL)
 
-Sliced by user-visible value, ordered by dependency. **No US exists just to create
-types/utils** — those ride along inside the REAL slice. Each US becomes its own
-implementation plan (chunked further at plan time).
+Sliced by user-visible value, ordered by dependency. **No epic exists just to create
+types/utils** — those ride along inside the REAL slice. The first three epics each
+**prove one part** of `Worker = Agent + Harness + Soul` on a single CLI (Codex);
+only then do we expand. Each epic becomes its own implementation plan (chunked into
+TDD tasks at plan time).
 
-**US-1 — MVP: "Run a developer Worker on a task via Codex."**
-*Real deliverable:* a working **developer Worker**. Operator picks the developer
-soul + Codex agent + sandbox/dir, types a task, hits Run, watches real streamed
-output. Rides along: `types.ts`, the `AgentAdapter` interface + Codex adapter,
-`WorkerEvent`, the runner, protocol messages, the credential passthrough, and the
-`worker.tsx` UI — all in service of this one REAL worker.
+### Prove it — three small epics, Codex only
 
-**US-2 — "Choose what kind of worker (soul library)."**
-*Real deliverable:* selectable roles (reviewer, qa, …) that visibly change how the
-Worker behaves. Adds the `souls/` library + picker; reuses US-1's pipeline.
+**Epic 1 — Codex Adapter (proves the Agent).**
+*Real deliverable:* run any task through Codex and watch clean, normalized streamed
+output — and cancel it. The raw agent bridge, rock-solid. Spawn `codex exec --json`,
+parse JSONL → normalized `WorkerEvent`s, stream, cancel, transport-error handling.
+Task passed through as the prompt — **no soul system**, minimal harness (sandbox +
+workingDir only). Rides along: `types.ts`, the `AgentAdapter` interface + Codex
+adapter, `WorkerEvent`, the runner, protocol messages, the credential passthrough,
+and a minimal `worker.tsx`. The layer everything else stands on.
 
-**US-3 — "Run the same Worker via Claude Code (second provider)."**
-*Real deliverable:* the operator can swap the brain to `anthropic × cli` and run
-the same soul/harness. Proves the adapter abstraction for real; adds OAuth-token
-auth + per-account config dir.
+**Epic 2 — Harness Core (proves the Harness).**
+*Real deliverable:* the Worker shows exactly what it's doing and refuses to claim
+"done" without passing checks — the "better harness" value made visible. Builds the
+control-system facets on Epic 1's bridge: Observability (full event stream), a
+Verification gate (lint/test before "done"), and Guardrails (sandbox modes,
+step/token caps, approval). Designed against Codex's real event shapes behind a
+CLI-agnostic contract.
 
-**US-4 — "See what the Worker is doing, and trust it's done."**
-*Real deliverable:* live progress (parse the full event stream → observability) and
-a verification gate (lint/test must pass before the Worker reports "done"). The
-"better harness" value made visible.
+**Epic 3 — Soul Core (proves the Soul).**
+*Real deliverable:* pick a role and the Worker visibly behaves like it — a developer
+plans-then-verifies, a reviewer critiques. The identity layer: the `souls/` library
+as data (developer, reviewer, qa), render-to-instruction, the **verified
+soul-injection channel** (`-c` override vs temp `AGENTS.md`), the role picker, and
+batched decision-requests (§7.2).
 
-**US-5 — "Run a Cloud Worker (no CLI installed)."**
-*Real deliverable:* a Worker over an HTTP agent (`anthropic × http` or
-`openrouter × http`) — we build the agent loop, tool dispatch, and system-prompt
-soul injection. Unlocks the Cloud protocol.
+> After Epics 1–3, Worker is proven: one CLI, but a complete, reliable, role-driven
+> worker, demoable end to end. That's the bar before any breadth.
 
-**US-6 — "Use any provider / account."**
-*Real deliverable:* remaining companies/sub-protocols (`google`, `nvidia`, OpenAI
-HTTP oauth proxy), multi-account credential management, OAuth/PKCE/device flows.
+### Then — expand
 
-**US-7 — "Don't make me pick one agent — load-balance across mine."**
-*Real deliverable:* the `AgentPool` (§7.1) — tag agents with a tier, pick a task's
-tier, round-robin across same-tier peers, fall back down a tier on transport
-failure. The user assembles a Worker by *tier*, not a single fixed agent.
-(Naturally follows US-6 — needs several agents to balance across.)
+**Epic 4 — More CLIs (Claude Code, then Antigravity).**
+*Real deliverable:* swap the brain to `anthropic × cli` (then `antigravity`) and run
+the same soul + harness — proves the adapter abstraction for real. Two more adapters
+behind the same interface; core unchanged. Adds OAuth-token auth + per-account config
+dir. Verify each CLI's flags/auth/soul-channel before its plan (§11); Antigravity
+(`agy`) is §9-unconfirmed but installed on the dev machine.
+
+**Epic 5 — HTTP protocol (build the loop).**
+*Real deliverable:* a Cloud Worker with no CLI installed (`anthropic × http` or
+`openrouter × http`). Here *we* own the runtime — agent loop, tool dispatch,
+memory/context, system-prompt soul injection — reusing the verification gate +
+normalized events from Epics 2–3. Unlocks the Cloud protocol.
+
+### Then — other things
+
+**Epic 6 — Worker Management.**
+*Real deliverable:* create/edit/save/delete workers (cli + http) across sessions;
+run multiple agents within the same Company; load-balance across them. Worker CRUD +
+persistence, then multi-account (per-account config dirs, OAuth/PKCE/device flows),
+then the `AgentPool` (§7.1) — tag agents with a tier, pick a task's tier, round-robin
+across same-tier peers, fall back down a tier on transport failure. The user
+assembles a Worker by *tier*, not a single fixed agent.
 
 (*Semantic* routing — understanding a task to pick the single best Worker — is a
 **separate** capability beyond this spec. The tier-based round-robin/fallback in
-US-7 is mechanical, not semantic.)
+Epic 6 is mechanical, not semantic.)
 
 ---
 
 ## 13. Out of scope (this spec)
 
 - **Semantic** routing — understanding a task to auto-select the single best
-  Worker. (Tier-based round-robin/fallback *is* in scope — US-7, §7.1.)
-- Persisting worker configs across sessions (US-1 is in-memory; persistence can
-  arrive with multi-account work).
+  Worker. (Tier-based round-robin/fallback *is* in scope — Epic 6, §7.1.)
+- Persistence is *deferred, not cut*: Epics 1–5 keep workers in-memory; CRUD +
+  cross-session persistence land in Epic 6.
 - The Scrum-team orchestration layer (multiple Workers collaborating) — built on
   top of Workers later (vision E4–E7).

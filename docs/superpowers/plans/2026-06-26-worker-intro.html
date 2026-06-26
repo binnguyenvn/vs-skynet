@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker — Implementation Roadmap (intro)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1020px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:0 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  code{background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 8px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+    background:var(--panel);color:var(--mut)}
+  .eq{font-family:var(--mono);font-size:18px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:16px 18px;margin:18px 0;text-align:center;letter-spacing:.02em}
+  .eq b{color:var(--acc)} .eq .h{color:var(--grn)} .eq .s{color:var(--pur)}
+  .eq .map{display:block;font-size:12px;color:var(--mut);margin-top:8px;letter-spacing:0}
+  .cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .k{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  .card .t{font-weight:600;margin:4px 0 6px}
+  .flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-family:var(--mono);
+    font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .flow .n{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+  .flow .ar{color:var(--acc)}
+
+  .epic{border:1px solid var(--line);border-radius:14px;margin:14px 0;overflow:hidden}
+  .epic>.ehd{display:flex;align-items:center;gap:14px;padding:15px 18px;background:var(--panel2)}
+  .epic .etag{font-family:var(--mono);font-weight:700;font-size:12.5px;padding:5px 10px;border-radius:7px;white-space:nowrap}
+  .epic .etitle{font-weight:700;font-size:16.5px;flex:1}
+  .epic .epart{font-size:11px;font-family:var(--mono);color:var(--mut);border:1px solid var(--line);
+    border-radius:999px;padding:3px 9px;white-space:nowrap}
+  .epic>.ebd{padding:12px 18px 16px}
+  .epic .deliver{font-size:14px;margin:0 0 10px}
+  .epic .deliver b{color:var(--grn)}
+
+  /* the three proof epics */
+  .epic.prove{border-color:rgba(63,185,80,.4)}
+  .epic.prove>.ehd{background:linear-gradient(90deg,rgba(63,185,80,.12),var(--panel2) 60%)}
+  .epic.prove .etag{color:#04130a;background:var(--grn)}
+  /* later epics */
+  .epic.later .etag{color:var(--mut);background:var(--panel)}
+  .epic.later{opacity:.92}
+
+  .ride{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .b-ver{background:rgba(63,185,80,.15);color:var(--grn);border:1px solid rgba(63,185,80,.35)}
+  .b-res{background:rgba(210,153,34,.13);color:var(--yel);border:1px solid rgba(210,153,34,.32)}
+  .b-mvp{background:rgba(63,185,80,.22);color:var(--grn);border:1px solid rgba(63,185,80,.5);font-weight:600}
+
+  .divider{display:flex;align-items:center;gap:12px;margin:26px 0 6px;color:var(--mut);
+    font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  .divider::before,.divider::after{content:"";height:1px;background:var(--line);flex:1}
+
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td .mono{color:#c9d6e3}
+  .new{color:var(--grn)} .mod{color:var(--yel)}
+  ol.steps{margin:10px 0;padding-left:20px} ol.steps li{margin:7px 0}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)}
+  .note.good{border-left-color:var(--grn)}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px;padding:2px 7px;margin:2px 3px 2px 0}
+  .ask{background:linear-gradient(180deg,#16241b,#10160f);border:1px solid rgba(63,185,80,.35);
+    border-radius:12px;padding:18px 20px;margin:30px 0}
+  .ask h3{color:var(--grn)}
+  footer{margin-top:50px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:720px){.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Worker — Implementation Roadmap</h1>
+  <p class="sub">A review-first overview of <b>how I intend to build</b> the Worker spec.
+     Read this, then I write the detailed task-by-task plans.</p>
+  <div class="tags">
+    <span class="tag">spec: docs/superpowers/specs/2026-06-26-worker-design.md</span>
+    <span class="tag">2026-06-26</span>
+    <span class="tag">rev 3 — fine-sliced, prove-the-three-parts first</span>
+  </div>
+
+  <h2>What we're building</h2>
+  <p>A <b>Worker</b> is a complete, ready-to-work AI unit. The extension's single strongest
+     capability is turning a raw model into a dependable worker that knows its job, runs reliably,
+     and produces real output. Three parts — and the first three epics prove each one:</p>
+
+  <div class="eq"><b>Worker</b> = <b>Agent</b> + <span class="h">Harness</span> + <span class="s">Soul</span>
+    <span class="map">Epic 1 proves the <b style="color:var(--acc)">Agent</b> ·
+      Epic 2 proves the <b style="color:var(--grn)">Harness</b> ·
+      Epic 3 proves the <b style="color:var(--pur)">Soul</b></span></div>
+
+  <div class="cards">
+    <div class="card"><div class="k">Brain</div><div class="t" style="color:var(--acc)">Agent</div>
+      <div class="mut">A Model from a Company, reached over a Protocol (cli/http) via an
+      AuthMethod + Credentials.</div></div>
+    <div class="card"><div class="k">Body</div><div class="t" style="color:var(--grn)">Harness</div>
+      <div class="mut">Everything-but-the-model that makes it run reliably: agent loop, tool dispatch,
+      guardrails, observability, memory, verification.</div></div>
+    <div class="card"><div class="k">Identity</div><div class="t" style="color:var(--pur)">Soul</div>
+      <div class="mut">The role + responsibilities + methodology that make it a <i>worker</i>:
+      "You are a developer; a developer ⟨investigates → plans → implements → verifies⟩."</div></div>
+  </div>
+
+  <h2>Guiding principle — prove the three parts before expanding</h2>
+  <p>"A decent model with a great harness beats a great model with a bad one." So we build narrow and
+     deep first: get <b>one stable agent bridge</b> (Codex CLI), then a <b>real harness</b> on it, then a
+     <b>real soul</b> on it — three small epics that <b>prove Worker works well</b> end to end. Only then do
+     we expand (more CLIs, then HTTP) and add management (CRUD, multi-account). The CLIs ship their own
+     agent loop, so the core is cheap to prove; HTTP — where <i>we</i> build the loop — waits until it's
+     clearly worth the cost.</p>
+
+  <table>
+    <tr><th>Protocol</th><th>Harness</th><th>Soul injection</th><th>Cost</th></tr>
+    <tr><td><span class="mono">cli</span> <span class="mut">(Local)</span></td>
+        <td>Ships built-in — we <b>configure</b> knobs (sandbox, dir, MCP)</td>
+        <td>Render to instruction channel (Codex <span class="mono">-c</span> / temp <span class="mono">AGENTS.md</span>)</td>
+        <td class="new">cheap — reuse</td></tr>
+    <tr><td><span class="mono">http</span> <span class="mut">(Cloud)</span></td>
+        <td>Bare model — <b>we build</b> the loop, dispatch, memory, verification</td>
+        <td>Render into the system prompt of every request</td>
+        <td class="mod">expensive — build</td></tr>
+  </table>
+
+  <h2>The epics</h2>
+  <p class="mut">Fine-sliced. The first three each prove one part of the Worker on Codex; everything else
+     waits behind them. Each epic still ships something <b>real</b>, and each is chunked further into
+     TDD tasks at plan time.</p>
+
+  <div class="divider">Prove it — three small epics, Codex only</div>
+
+  <!-- EPIC 1 -->
+  <div class="epic prove">
+    <div class="ehd"><span class="etag">EPIC 1</span>
+      <span class="etitle">Codex Adapter — a stable agent bridge</span>
+      <span class="epart">proves: Agent</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> run any task through Codex and watch clean, normalized
+        streamed output — and cancel it. The raw bridge, rock-solid.</p>
+      <p class="mut" style="margin:0">Spawn <span class="mono">codex exec --json</span>, parse JSONL →
+        normalized <span class="mono">WorkerEvent</span>s, stream to the panel, cancel handle, transport-error
+        handling. Task is passed through as the prompt — <b>no soul system yet</b>, minimal harness
+        (sandbox + working dir only). This is the layer everything else stands on, so it goes in first and alone.</p>
+      <div class="ride">
+        <span class="pill">types.ts</span><span class="pill">AgentAdapter</span>
+        <span class="pill">Codex adapter</span><span class="pill">WorkerEvent</span>
+        <span class="pill">runner</span><span class="pill">protocol msgs</span>
+        <span class="pill">credential passthrough</span><span class="pill">minimal worker.tsx</span></div>
+      <div class="ride"><span class="badge b-mvp">MVP · codex 0.142.2 verified</span></div>
+    </div>
+  </div>
+
+  <!-- EPIC 2 -->
+  <div class="epic prove">
+    <div class="ehd"><span class="etag">EPIC 2</span>
+      <span class="etitle">Harness Core — make it reliable</span>
+      <span class="epart">proves: Harness</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> the worker shows exactly what it's doing and refuses to
+        claim "done" without passing checks. The "better harness" value, made visible.</p>
+      <p class="mut" style="margin:0">Build the control-system facets on top of Epic 1's bridge:
+        <b>observability</b> (parse the full event stream — tool calls, logs, decisions), a
+        <b>verification gate</b> (lint/test must pass before "done"), and <b>guardrails</b> (sandbox modes,
+        step/token caps, approval). Designed against Codex's real event shapes, behind a CLI-agnostic contract.</p>
+      <div class="ride"><span class="badge b-ver">codex events — captured live</span></div>
+    </div>
+  </div>
+
+  <!-- EPIC 3 -->
+  <div class="epic prove">
+    <div class="ehd"><span class="etag">EPIC 3</span>
+      <span class="etitle">Soul Core — make it a worker</span>
+      <span class="epart">proves: Soul</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> pick a role and the Worker visibly behaves like that role —
+        a developer plans-then-verifies, a reviewer critiques. It becomes a real <i>worker</i>, not a raw model.</p>
+      <p class="mut" style="margin:0">The identity layer: <span class="mono">souls/</span> library as data
+        (developer, reviewer, qa), render-to-instruction, the <b>verified soul-injection channel</b>
+        (<span class="mono">-c</span> override vs temp <span class="mono">AGENTS.md</span> — confirmed here),
+        the role picker, and batched decision-requests (§7.2 — enumerate decisions up front, ask once).</p>
+      <div class="ride"><span class="badge b-res">verify soul channel first</span></div>
+    </div>
+  </div>
+
+  <div class="note good"><b>After these three, Worker is proven.</b> One CLI, but a complete, reliable,
+    role-driven worker — demoable end to end. That's the bar before we spend a line on breadth.</div>
+
+  <div class="divider">Then — expand</div>
+
+  <!-- EPIC 4 -->
+  <div class="epic later">
+    <div class="ehd"><span class="etag">EPIC 4</span>
+      <span class="etitle">More CLIs — Claude Code, then Antigravity</span>
+      <span class="epart">reuse the proven core</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> swap the brain to <span class="mono">anthropic × cli</span>
+        (then <span class="mono">antigravity</span>) and run the same soul + harness. Proves the adapter
+        abstraction for real.</p>
+      <p class="mut" style="margin:0">Two more adapters behind the same interface; harness + soul core
+        unchanged. Adds OAuth-token auth + per-account config dir. <b>Verify each CLI's flags/auth/soul-channel
+        before its plan</b> — Antigravity (<span class="mono">agy</span>) is §9-unconfirmed but installed here.</p>
+      <div class="ride"><span class="badge b-res">research-only — verify first</span></div>
+    </div>
+  </div>
+
+  <!-- EPIC 5 -->
+  <div class="epic later">
+    <div class="ehd"><span class="etag">EPIC 5</span>
+      <span class="etitle">HTTP protocol — build the loop</span>
+      <span class="epart">the expensive part, now worth it</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> a Cloud Worker with no CLI installed
+        (<span class="mono">anthropic × http</span> / <span class="mono">openrouter × http</span>).</p>
+      <p class="mut" style="margin:0">Here <i>we</i> own the runtime: the agent loop, tool dispatch,
+        memory/context management, and system-prompt soul injection — reusing the verification gate and
+        normalized events from Epics 2–3. Unlocks the Cloud protocol.</p>
+      <div class="ride"><span class="badge b-res">research-only</span></div>
+    </div>
+  </div>
+
+  <div class="divider">Then — other things</div>
+
+  <!-- EPIC 6 -->
+  <div class="epic later">
+    <div class="ehd"><span class="etag">EPIC 6</span>
+      <span class="etitle">Worker Management</span>
+      <span class="epart">CRUD · persistence · multi-account</span></div>
+    <div class="ebd">
+      <p class="deliver"><b>Real deliverable:</b> create / edit / save / delete workers (cli + http) across
+        sessions; run multiple agents within the same Company; load-balance across them.</p>
+      <p class="mut" style="margin:0">Worker CRUD + persistence, then multi-account (per-account config dirs,
+        OAuth/PKCE/device flows), then the <span class="mono">AgentPool</span> — tier tagging, round-robin
+        across same-tier peers, fall back down a tier on transport failure. Mechanical load-balancing,
+        <b>not</b> semantic routing (out of scope, §13).</p>
+      <div class="ride"><span class="badge b-res">later</span></div>
+    </div>
+  </div>
+
+  <div class="note warn"><b>Verification discipline (spec §11, non-negotiable):</b> only Codex (Epics 1–3)
+    is verified today. Claude & Antigravity (Epic 4) and all HTTP (Epic 5) get a real
+    <span class="mono">--help</span>/API check — flags, auth env vars, soul channel — as the first step of
+    their own plan. No detailed plan is written for an unverified tool.</div>
+
+  <h2>Epic 1 in detail — the first plan I'll write</h2>
+  <p>The stable Codex bridge, turned into a full task-by-task TDD plan (same format as the model-catalog
+     plan: failing test → implement → pass → commit). Extension host under <code>src/worker/</code>; the
+     webview never spawns processes or holds credentials. <b>No soul library and no harness facets yet</b> —
+     those are Epics 2 and 3.</p>
+
+  <h3>Files</h3>
+  <table>
+    <tr><th>File</th><th>What</th></tr>
+    <tr><td class="new mono">src/worker/types.ts</td><td>Worker / Agent / Harness / WorkerEvent / DecisionAsk — the domain model (§4), <b>CLI-agnostic</b> on purpose. (Soul type declared; its library lands in Epic 3.)</td></tr>
+    <tr><td class="new mono">src/worker/adapters/types.ts</td><td><span class="mono">AgentAdapter</span> interface, <span class="mono">Invocation</span>, <span class="mono">Credentials</span> (§7)</td></tr>
+    <tr><td class="new mono">src/worker/adapters/codex.ts</td><td>openai×cli adapter: <span class="mono">buildInvocation</span> (argv/env) + <span class="mono">parseEvents</span> (JSONL → WorkerEvent)</td></tr>
+    <tr><td class="new mono">src/worker/runner.ts</td><td><span class="mono">runWorker(worker, task, onEvent)</span> → spawn, stream, cancel handle. Spawn is an injectable seam (testable without a real process)</td></tr>
+    <tr><td class="mod mono">src/webview/protocol.ts</td><td>+ <span class="mono">runTask</span> / <span class="mono">cancelTask</span> (→ext) and <span class="mono">taskEvent</span> (→webview)</td></tr>
+    <tr><td class="mod mono">src/webview/panel.ts</td><td>Route <span class="mono">runTask</span>→<span class="mono">runWorker</span>, forward each event; <span class="mono">cancelTask</span>→cancel handle</td></tr>
+    <tr><td class="new mono">src/webview/views/worker.tsx</td><td><b>Minimal</b>: sandbox <span class="mono">Select</span> · working-dir input · task <span class="mono">Textarea</span> · Run/Cancel · raw output pane. (No soul/agent pickers yet — Codex is fixed.)</td></tr>
+    <tr><td class="mod mono">src/webview/index.tsx</td><td>Register the <span class="mono">"worker"</span> view</td></tr>
+    <tr><td class="mod mono">src/extension.ts</td><td>Register the <span class="mono">openWorker</span> command</td></tr>
+    <tr><td class="new mono">src/test/worker-codex.test.ts</td><td>Pure tests: <span class="mono">parseEvents</span> over <b>real captured</b> Codex JSONL + <span class="mono">buildInvocation</span> argv; runner with a fake spawn</td></tr>
+  </table>
+
+  <h3>Task chunking (TDD, commit per task)</h3>
+  <ol class="steps">
+    <li><b>Capture ground truth.</b> Run <span class="mono">codex exec --json</span> on a throwaway task,
+      save the real JSONL as a fixture. Build <code>parseEvents</code> against reality, not the (already-wrong) research doc.</li>
+    <li><b>Domain types (pure).</b> <code>types.ts</code> + <code>adapters/types.ts</code> — the CLI-agnostic
+      <code>Worker</code>/<code>WorkerEvent</code>/<code>AgentAdapter</code> contracts.</li>
+    <li><b>Codex adapter (pure, DI).</b> <code>buildInvocation</code> →
+      <span class="mono">codex exec --json -s &lt;sandbox&gt; -C &lt;dir&gt; [-m &lt;model&gt;] "&lt;task&gt;"</span>;
+      <code>parseEvents</code> maps the captured JSONL → <code>WorkerEvent</code>s. No process spawned in tests.</li>
+    <li><b>Runner.</b> <code>runWorker</code> wires adapter → injected spawn → event stream → cancel handle.
+      Tested with a fake child emitting fixture JSONL.</li>
+    <li><b>Host wiring.</b> protocol messages + <code>panel.ts</code> routing + <code>extension.ts</code> command.</li>
+    <li><b>Minimal webview.</b> <code>worker.tsx</code> reusing existing shadcn primitives; streams
+      <code>taskEvent</code>s into the output pane.</li>
+  </ol>
+
+  <h3>Verified ground truth (codex 0.142.2, checked on this machine)</h3>
+  <div class="flow">
+    <span class="n">codex exec</span><span class="ar">+</span>
+    <span class="n">--json (JSONL stream)</span><span class="ar">+</span>
+    <span class="n">-s sandbox</span><span class="ar">+</span>
+    <span class="n">-C dir</span><span class="ar">+</span>
+    <span class="n">-m model?</span>
+  </div>
+  <p class="mut" style="margin-top:8px">Confirmed present: <span class="mono">-m</span>,
+    <span class="mono">--json</span>, <span class="mono">-c key=value</span>, plus (per spec §8)
+    <span class="mono">-s</span>, <span class="mono">-C</span>, <span class="mono">-o</span>,
+    <span class="mono">--add-dir</span>, <span class="mono">--skip-git-repo-check</span>,
+    <span class="mono">--ephemeral</span>. Auth reuses the existing <span class="mono">codex login</span>.
+    Epic 1 passes the task as the prompt and does <b>not</b> use <span class="mono">-c</span> — soul injection
+    is Epic 3's job, kept out of the bridge.</p>
+
+  <h2>Out of scope (whole roadmap)</h2>
+  <p><span class="pill">semantic routing</span><span class="pill">scrum-team orchestration</span> — per spec §13.
+     <span class="mut">(Cross-session persistence is deferred into Epic 6, not cut.)</span></p>
+
+  <div class="ask">
+    <h3>Your review gate</h3>
+    <p style="margin:6px 0 0">This is the fine-sliced shape — three small prove-it epics (Agent → Harness →
+       Soul) on Codex, then expand, then management. If it looks right, I'll write the full
+       <b>Epic 1 plan</b> to <code>docs/superpowers/plans/2026-06-26-worker-e1-codex-adapter.md</code>
+       (task-by-task, TDD, ready to execute). Tell me if you want the epic boundaries, order, or Epic 1
+       scope changed first.</p>
+  </div>
+
+  <footer>
+    Source of truth is the spec markdown; this intro is a human-facing review artifact.
+    Generated from <span class="mono">docs/superpowers/specs/2026-06-26-worker-design.md</span> · 2026-06-26.
+  </footer>
+</div>
+</body>
+</html>
