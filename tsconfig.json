@@ -2,7 +2,6 @@
     "compilerOptions": {
         "ignoreDeprecations": "6.0",
         "module": "Node16",
-        "resolveJsonModule": true,
         "target": "ES2022",
         "jsx": "react-jsx",
         "lib": [

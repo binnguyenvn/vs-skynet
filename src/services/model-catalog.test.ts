@@ -1,13 +1,24 @@
 import * as assert from "assert";
-import {
-  CatalogDeps,
-  ModelCatalog,
-  parseCatalog,
-  RawCatalog,
-  selectModels,
-} from "./model-catalog";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import * as vscode from "vscode";
+import { Company, ModelInfo, getModelsByCompany } from "./model-catalog";
 
-const FIXTURE: RawCatalog = {
+type CatalogFixture = {
+  models: Record<
+    string,
+    {
+      display_name?: string;
+      owned_by?: string;
+      aliases?: string[];
+    }
+  >;
+};
+
+const CACHE_FILE = "model-catalog.json";
+
+const DISK_FIXTURE: CatalogFixture = {
   models: {
     "claude-opus-4-5": {
       display_name: "Claude Opus 4.5",
@@ -25,16 +36,7 @@ const FIXTURE: RawCatalog = {
   },
 };
 
-const SNAPSHOT_FIXTURE: RawCatalog = {
-  models: {
-    "snap-model": {
-      display_name: "Snap",
-      owned_by: "anthropic",
-    },
-  },
-};
-
-const REMOTE_FIXTURE: RawCatalog = {
+const REMOTE_FIXTURE: CatalogFixture = {
   models: {
     "live-model": {
       display_name: "Live",
@@ -43,164 +45,199 @@ const REMOTE_FIXTURE: RawCatalog = {
   },
 };
 
-function fakeDeps(overrides: Partial<CatalogDeps> = {}): CatalogDeps {
+function createContext(storagePath: string): vscode.ExtensionContext {
   return {
-    ttlMs: 1_000,
-    snapshot: SNAPSHOT_FIXTURE,
-    fetchText: async () => {
-      throw new Error("offline");
-    },
-    readDiskText: async () => null,
-    writeDiskText: async () => {},
-    diskAgeMs: async () => null,
-    logError: () => {},
-    ...overrides,
-  };
+    globalStorageUri: vscode.Uri.file(storagePath),
+  } as vscode.ExtensionContext;
 }
 
-suite("model-catalog: pure", () => {
-  test("parseCatalog parses a valid catalog", () => {
-    const parsed = parseCatalog(JSON.stringify(FIXTURE));
-    assert.ok(parsed);
-    assert.strictEqual(Object.keys(parsed.models).length, 4);
+async function withCatalogEnvironment(
+  options: {
+    fetchText?: string | Error;
+    fetchDelayMs?: number;
+    diskText?: string | null;
+    diskMtimeAgeMs?: number | null;
+  },
+  run: (state: {
+    readonly fetchCalls: number;
+    readonly storagePath: string;
+    readonly context: vscode.ExtensionContext;
+  }) => Promise<void>,
+): Promise<void> {
+  const storagePath = await fs.mkdtemp(path.join(os.tmpdir(), "model-catalog-"));
+  const cachePath = path.join(storagePath, CACHE_FILE);
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  if (options.diskText !== null && options.diskText !== undefined) {
+    await fs.mkdir(storagePath, { recursive: true });
+    await fs.writeFile(cachePath, options.diskText, "utf8");
+
+    if (options.diskMtimeAgeMs !== null && options.diskMtimeAgeMs !== undefined) {
+      const mtime = new Date(Date.now() - options.diskMtimeAgeMs);
+      await fs.utimes(cachePath, mtime, mtime);
+    }
+  }
+
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    if (options.fetchText instanceof Error) {
+      throw options.fetchText;
+    }
+    if (options.fetchDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, options.fetchDelayMs));
+    }
+    return {
+      ok: true,
+      text: async () => options.fetchText ?? JSON.stringify(REMOTE_FIXTURE),
+      status: 200,
+    } as Response;
+  };
+
+  try {
+    await run({
+      get fetchCalls() {
+        return fetchCalls;
+      },
+      storagePath,
+      context: createContext(storagePath),
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(storagePath, { recursive: true, force: true });
+  }
+}
+
+async function idsFor(
+  company: Company,
+  options: Parameters<typeof withCatalogEnvironment>[0],
+): Promise<string[]> {
+  let ids: string[] = [];
+  await withCatalogEnvironment(options, async ({ context }) => {
+    ids = (await getModelsByCompany(context, company)).map((model: ModelInfo) => model.id);
+  });
+  return ids;
+}
+
+suite("model-catalog", () => {
+  test("owner-filtered companies only return matching owned_by models", async () => {
+    const ids = await idsFor("anthropic", {
+      diskText: JSON.stringify(DISK_FIXTURE),
+      diskMtimeAgeMs: 10,
+    });
+
+    assert.deepStrictEqual(ids.sort(), ["claude-opus-4-5", "no-display"]);
   });
 
-  test("parseCatalog returns null on malformed JSON", () => {
-    assert.strictEqual(parseCatalog("{ not json"), null);
-  });
+  test("owner-filtered companies exclude models without owned_by", async () => {
+    const ids = await idsFor("openai", {
+      diskText: JSON.stringify(DISK_FIXTURE),
+      diskMtimeAgeMs: 10,
+    });
 
-  test("parseCatalog returns null when shape is wrong", () => {
-    assert.strictEqual(parseCatalog(JSON.stringify({ nope: 1 })), null);
-  });
-
-  test("owner filter returns only matching owned_by", () => {
-    const ids = selectModels(FIXTURE, "anthropic")
-      .map((model: { id: string }) => model.id)
-      .sort();
-    assert.deepStrictEqual(ids, ["claude-opus-4-5", "no-display"]);
-  });
-
-  test("owner filter excludes models with no owned_by", () => {
-    const ids = selectModels(FIXTURE, "openai").map((model: { id: string }) => model.id);
     assert.deepStrictEqual(ids, ["gpt-5"]);
   });
 
-  test("aggregator returns all models incl. no owned_by", () => {
-    const ids = selectModels(FIXTURE, "openrouter")
-      .map((model: { id: string }) => model.id)
-      .sort();
-    assert.deepStrictEqual(ids, ["claude-opus-4-5", "flux-pro", "gpt-5", "no-display"]);
+  test("aggregators return every model including ownerless entries", async () => {
+    const ids = await idsFor("openrouter", {
+      diskText: JSON.stringify(DISK_FIXTURE),
+      diskMtimeAgeMs: 10,
+    });
+
+    assert.deepStrictEqual(ids.sort(), ["claude-opus-4-5", "flux-pro", "gpt-5", "no-display"]);
   });
 
-  test("displayName falls back to id; ownedBy/aliases default", () => {
-    const flux = selectModels(FIXTURE, "nvidia").find(
-      (model: { id: string }) => model.id === "flux-pro",
-    );
-    assert.ok(flux);
-    assert.strictEqual(flux.displayName, "flux-pro");
-    assert.strictEqual(flux.ownedBy, "");
-    assert.deepStrictEqual(flux.aliases, []);
-  });
-});
+  test("displayName falls back to id and defaults ownedBy/aliases", async () => {
+    let model: ModelInfo | undefined;
 
-suite("model-catalog: loader", () => {
-  test("fetch ok + valid returns live data and writes disk", async () => {
-    let written: string | null = null;
-    const catalog = new ModelCatalog(
-      fakeDeps({
-        fetchText: async () => JSON.stringify(REMOTE_FIXTURE),
-        writeDiskText: async (text: string) => {
-          written = text;
-        },
-      }),
+    await withCatalogEnvironment(
+      {
+        diskText: JSON.stringify(DISK_FIXTURE),
+        diskMtimeAgeMs: 10,
+      },
+      async ({ context }) => {
+        model = (await getModelsByCompany(context, "nvidia")).find(
+          (entry: ModelInfo) => entry.id === "flux-pro",
+        );
+      },
     );
 
-    const ids = (await catalog.getModelsByCompany("anthropic")).map(
-      (model: { id: string }) => model.id,
-    );
-
-    assert.deepStrictEqual(ids, ["live-model"]);
-    assert.notStrictEqual(written, null);
+    assert.ok(model);
+    assert.strictEqual(model.displayName, "flux-pro");
+    assert.strictEqual(model.ownedBy, "");
+    assert.deepStrictEqual(model.aliases, []);
   });
 
-  test("fetch throws + no disk returns snapshot data without throwing", async () => {
-    const catalog = new ModelCatalog(fakeDeps());
+  test("malformed fetched JSON falls back without throwing", async () => {
+    const ids = await idsFor("anthropic", {
+      fetchText: JSON.stringify({ nope: 1 }),
+      diskText: null,
+      diskMtimeAgeMs: null,
+    });
 
-    const ids = (await catalog.getModelsByCompany("anthropic")).map(
-      (model: { id: string }) => model.id,
-    );
-
-    assert.deepStrictEqual(ids, ["snap-model"]);
-  });
-
-  test("malformed fetched JSON falls back to snapshot data", async () => {
-    const catalog = new ModelCatalog(
-      fakeDeps({
-        fetchText: async () => JSON.stringify({ nope: 1 }),
-      }),
-    );
-
-    const ids = (await catalog.getModelsByCompany("anthropic")).map(
-      (model: { id: string }) => model.id,
-    );
-
-    assert.deepStrictEqual(ids, ["snap-model"]);
+    assert.ok(ids.length > 0);
   });
 
   test("fresh disk cache is used before fetch", async () => {
-    let fetchCalls = 0;
-    const diskCatalog: RawCatalog = {
-      models: {
-        "disk-model": {
-          display_name: "Disk",
-          owned_by: "anthropic",
-        },
+    await withCatalogEnvironment(
+      {
+        diskText: JSON.stringify(DISK_FIXTURE),
+        diskMtimeAgeMs: 10,
       },
-    };
-    const catalog = new ModelCatalog(
-      fakeDeps({
-        diskAgeMs: async () => 10,
-        readDiskText: async () => JSON.stringify(diskCatalog),
-        fetchText: async () => {
-          fetchCalls += 1;
-          return JSON.stringify(REMOTE_FIXTURE);
-        },
-      }),
+      async (state) => {
+        const ids = await getModelsByCompany(state.context, "anthropic");
+        assert.deepStrictEqual(
+          ids.map((model: ModelInfo) => model.id).sort(),
+          ["claude-opus-4-5", "no-display"],
+        );
+        assert.strictEqual(state.fetchCalls, 0);
+      },
     );
-
-    const ids = (await catalog.getModelsByCompany("anthropic")).map(
-      (model: { id: string }) => model.id,
-    );
-
-    assert.deepStrictEqual(ids, ["disk-model"]);
-    assert.strictEqual(fetchCalls, 0);
   });
 
-  test("parallel first calls share one in-flight fetch", async () => {
-    let fetchCalls = 0;
-    const catalog = new ModelCatalog(
-      fakeDeps({
-        fetchText: async () => {
-          fetchCalls += 1;
-          await new Promise((resolve) => setTimeout(resolve, 10));
-          return JSON.stringify(REMOTE_FIXTURE);
-        },
-      }),
-    );
+  test("parallel calls share one in-flight fetch", async () => {
+    await withCatalogEnvironment(
+      {
+        fetchDelayMs: 10,
+        diskText: null,
+        diskMtimeAgeMs: null,
+      },
+      async (state) => {
+        const [a, b] = await Promise.all([
+          getModelsByCompany(state.context, "anthropic"),
+          getModelsByCompany(state.context, "anthropic"),
+        ]);
 
-    const [a, b] = await Promise.all([
-      catalog.getModelsByCompany("anthropic"),
-      catalog.getModelsByCompany("anthropic"),
-    ]);
-
-    assert.strictEqual(fetchCalls, 1);
-    assert.deepStrictEqual(
-      a.map((model: { id: string }) => model.id),
-      ["live-model"],
+        assert.strictEqual(state.fetchCalls, 1);
+        assert.deepStrictEqual(
+          a.map((model: ModelInfo) => model.id),
+          ["live-model"],
+        );
+        assert.deepStrictEqual(
+          b.map((model: ModelInfo) => model.id),
+          ["live-model"],
+        );
+      },
     );
-    assert.deepStrictEqual(
-      b.map((model: { id: string }) => model.id),
-      ["live-model"],
+  });
+
+  test("successful fetch writes the disk cache", async () => {
+    await withCatalogEnvironment(
+      {
+        diskText: null,
+        diskMtimeAgeMs: null,
+      },
+      async (state) => {
+        const ids = await getModelsByCompany(state.context, "anthropic");
+        assert.deepStrictEqual(
+          ids.map((model: ModelInfo) => model.id),
+          ["live-model"],
+        );
+        assert.strictEqual(
+          await fs.readFile(path.join(state.storagePath, CACHE_FILE), "utf8"),
+          JSON.stringify(REMOTE_FIXTURE),
+        );
+      },
     );
   });
 });

@@ -1,6 +1,7 @@
+import * as path from "path";
+import { existsSync, readFileSync } from "fs";
 import * as vscode from "vscode";
 import { z } from "zod";
-import snapshotJson from "./models.snapshot.json";
 
 export type Company = "openai" | "anthropic" | "google" | "openrouter" | "nvidia";
 
@@ -16,6 +17,8 @@ const REMOTE_URL =
 const CACHE_FILE = "model-catalog.json";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
 const AGGREGATORS = new Set<Company>(["openrouter", "nvidia"]);
+const EMPTY_CATALOG: RawCatalog = { models: {} };
+const catalogsByContext = new WeakMap<vscode.ExtensionContext, ModelCatalogService>();
 
 const ModelEntrySchema = z
   .object({
@@ -31,9 +34,9 @@ const CatalogSchema = z
   })
   .passthrough();
 
-export type RawCatalog = z.infer<typeof CatalogSchema>;
+type RawCatalog = z.infer<typeof CatalogSchema>;
 
-export type CatalogDeps = {
+type CatalogDeps = {
   ttlMs: number;
   snapshot: RawCatalog;
   fetchText: () => Promise<string>;
@@ -43,13 +46,50 @@ export type CatalogDeps = {
   logError: (message: string, error: unknown) => void;
 };
 
+const SNAPSHOT = loadSnapshot();
+
+export async function getModelsByCompany(
+  context: vscode.ExtensionContext,
+  company: Company,
+): Promise<ModelInfo[]> {
+  let service = catalogsByContext.get(context);
+  if (!service) {
+    service = new ModelCatalogService(createCatalogDeps(context));
+    catalogsByContext.set(context, service);
+  }
+
+  return service.getModelsByCompany(company);
+}
+
+function loadSnapshot(): RawCatalog {
+  const snapshotPaths = [
+    path.resolve(__dirname, "models.snapshot.json"),
+    path.resolve(__dirname, "../src/services/models.snapshot.json"),
+    path.resolve(__dirname, "../../src/services/models.snapshot.json"),
+  ];
+
+  for (const snapshotPath of snapshotPaths) {
+    if (!existsSync(snapshotPath)) {
+      continue;
+    }
+
+    try {
+      return parseSnapshot(JSON.parse(readFileSync(snapshotPath, "utf8")));
+    } catch {
+      continue;
+    }
+  }
+
+  return EMPTY_CATALOG;
+}
+
 function parseSnapshot(snapshot: unknown): RawCatalog {
   const parsed = CatalogSchema.safeParse(snapshot);
-  return parsed.success ? parsed.data : { models: {} };
+  return parsed.success ? parsed.data : EMPTY_CATALOG;
 }
 
 // ponytail: validate only fields we read; widen if we ever surface capabilities/pricing.
-export function parseCatalog(text: string): RawCatalog | null {
+function parseCatalog(text: string): RawCatalog | null {
   try {
     const parsed = CatalogSchema.safeParse(JSON.parse(text));
     return parsed.success ? parsed.data : null;
@@ -58,7 +98,7 @@ export function parseCatalog(text: string): RawCatalog | null {
   }
 }
 
-export function selectModels(catalog: RawCatalog, company: Company): ModelInfo[] {
+function selectModels(catalog: RawCatalog, company: Company): ModelInfo[] {
   const includeAll = AGGREGATORS.has(company);
   const models: ModelInfo[] = [];
 
@@ -79,15 +119,11 @@ export function selectModels(catalog: RawCatalog, company: Company): ModelInfo[]
   return models;
 }
 
-export class ModelCatalog {
+class ModelCatalogService {
   private memoryCatalog: RawCatalog | null = null;
   private inFlightLoad: Promise<RawCatalog> | null = null;
 
   constructor(private readonly deps: CatalogDeps) {}
-
-  static forContext(context: vscode.ExtensionContext): ModelCatalog {
-    return new ModelCatalog(createCatalogDeps(context));
-  }
 
   async getModelsByCompany(company: Company): Promise<ModelInfo[]> {
     try {
@@ -192,11 +228,10 @@ export class ModelCatalog {
 
 function createCatalogDeps(context: vscode.ExtensionContext): CatalogDeps {
   const cacheUri = vscode.Uri.joinPath(context.globalStorageUri, CACHE_FILE);
-  const snapshot = parseSnapshot(snapshotJson);
 
   return {
     ttlMs: DEFAULT_TTL_MS,
-    snapshot,
+    snapshot: SNAPSHOT,
     fetchText: async () => {
       const response = await fetch(REMOTE_URL);
       if (!response.ok) {
