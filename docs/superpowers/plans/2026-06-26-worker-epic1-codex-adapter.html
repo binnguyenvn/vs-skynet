@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker — Epic 1: Codex Adapter — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1020px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  code{background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  pre code{background:none;padding:0;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 8px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+    background:var(--panel);color:var(--mut)}
+  .eq{font-family:var(--mono);font-size:18px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:16px 18px;margin:18px 0;text-align:center;letter-spacing:.02em}
+  .eq b{color:var(--acc)} .eq .h{color:var(--grn)} .eq .s{color:var(--pur)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)}
+  .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td .mono,td code{color:#c9d6e3}
+  .task{border:1px solid var(--line);border-radius:14px;margin:16px 0;overflow:hidden}
+  .task>.thd{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--panel2)}
+  .task .ttag{font-family:var(--mono);font-weight:700;font-size:12.5px;padding:5px 10px;border-radius:7px;
+    white-space:nowrap;color:#04130a;background:var(--grn)}
+  .task .ttitle{font-weight:700;font-size:16px;flex:1}
+  .task>.tbd{padding:14px 18px 18px}
+  ul.check{list-style:none;margin:10px 0;padding:0}
+  ul.check li{margin:6px 0;padding-left:26px;position:relative}
+  ul.check li::before{content:"\2610";position:absolute;left:0;color:var(--mut);font-size:15px}
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+  .badge{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .b-new{background:rgba(63,185,80,.15);color:var(--grn);border:1px solid rgba(63,185,80,.35)}
+  .b-mod{background:rgba(210,153,34,.13);color:var(--yel);border:1px solid rgba(210,153,34,.32)}
+  .b-test{background:rgba(88,166,255,.13);color:var(--acc);border:1px solid rgba(88,166,255,.32)}
+  .divider{display:flex;align-items:center;gap:12px;margin:30px 0 6px;color:var(--mut);
+    font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  .divider::before,.divider::after{content:"";height:1px;background:var(--line);flex:1}
+  footer{margin-top:50px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Worker — Epic 1: Codex Adapter</h1>
+  <p class="sub">Implementation plan · proves the <b>Agent</b> · single CLI (Codex)</p>
+  <div class="tags">
+    <span class="tag">spec: docs/superpowers/specs/2026-06-26-worker-design.md</span>
+    <span class="tag">2026-06-26</span>
+    <span class="tag">TDD · 5 tasks</span>
+  </div>
+
+  <div class="eq">Worker = <b>Agent</b> + <span class="h">Harness</span> + <span class="s">Soul</span></div>
+
+  <p><b>Goal:</b> Run any task through the Codex CLI and watch clean, normalized streamed output — and cancel it.</p>
+  <p class="mut"><b>Architecture:</b> A host-side <code>src/worker/</code> module. A pure <code>AgentAdapter</code> (Codex) turns a <code>Worker</code> into a <code>codex exec --json</code> invocation and parses its JSONL stream into normalized <code>WorkerEvent</code>s. <code>runWorker</code> spawns the process, pipes stdout through the parser, streams events to a callback, and returns a cancel handle. The webview gets a thin Worker view; the host owns the runner and credentials.</p>
+
+  <div class="note good">
+    <b>Verified against the real binary (codex-cli 0.142.2)</b> — not the research doc.
+    Event envelope is a <b>thread/turn/item</b> model:
+    <code>thread.started</code> → <code>turn.started</code> → <code>item.started/completed</code> → <code>turn.completed</code> (terminal).
+    Items: <code>agent_message {text}</code>, <code>command_execution {command, exit_code, status}</code>.
+    Non-JSON noise lines appear — the parser skips them. Spawn with <code>stdio:["ignore","pipe","pipe"]</code> or Codex blocks on stdin.
+  </div>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li>Invocation: <code>codex exec --json -s &lt;mode&gt; -C &lt;dir&gt; [-m &lt;model&gt;] --skip-git-repo-check "&lt;task&gt;"</code></li>
+    <li><b>No soul system</b> in Epic 1 — task passed through as the raw prompt; <code>Worker.soul</code> exists but is ignored (Epic 3).</li>
+    <li><b>Credentials = passthrough</b> — Codex uses its own <code>codex login</code>; no credential store (Epic 6).</li>
+    <li>Type files stay <b>node-free</b> so <code>protocol.ts</code> can <code>import type</code> without pulling <code>child_process</code> into the webview bundle.</li>
+    <li>Tests compile to <code>out/**/*.test.js</code>, run with <code>npm test</code> (Mocha <code>suite</code>/<code>test</code>/<code>assert</code>). Gates: <code>npm run check-types</code>, <code>npm run lint</code>.</li>
+  </ul>
+
+  <h2>File structure</h2>
+  <table>
+    <tr><th>File</th><th>Responsibility</th></tr>
+    <tr><td><span class="badge b-new">create</span> <code>src/worker/types.ts</code></td><td>Domain model: Worker, Agent, Harness, Soul, enums. Node-free.</td></tr>
+    <tr><td><span class="badge b-new">create</span> <code>src/worker/adapters/types.ts</code></td><td>AgentAdapter contract, Invocation, Credentials, WorkerEvent, DecisionAsk. Node-free.</td></tr>
+    <tr><td><span class="badge b-new">create</span> <code>src/worker/adapters/codex.ts</code></td><td>codexAdapter: buildInvocation + parseEvents (JSONL → WorkerEvent).</td></tr>
+    <tr><td><span class="badge b-test">test</span> <code>src/worker/adapters/codex.test.ts</code></td><td>Unit tests for buildInvocation + parseEvents.</td></tr>
+    <tr><td><span class="badge b-new">create</span> <code>src/worker/runner.ts</code></td><td>runWorker: spawn, stream, cancel, error mapping. Injectable spawnFn.</td></tr>
+    <tr><td><span class="badge b-test">test</span> <code>src/worker/runner.test.ts</code></td><td>Unit tests (fake spawn) + guarded real-Codex integration test.</td></tr>
+    <tr><td><span class="badge b-mod">modify</span> <code>src/webview/protocol.ts</code></td><td>Add runTask / cancelTask / taskEvent messages.</td></tr>
+    <tr><td><span class="badge b-mod">modify</span> <code>src/webview/panel.ts</code></td><td>Route runTask → runWorker; track handles; cancelTask → cancel.</td></tr>
+    <tr><td><span class="badge b-new">create</span> <code>src/webview/views/worker.tsx</code></td><td>Minimal Worker UI: sandbox/dir/model/task, Run/Cancel, output pane.</td></tr>
+    <tr><td><span class="badge b-mod">modify</span> <code>src/webview/index.tsx</code></td><td>Register the "worker" view.</td></tr>
+    <tr><td><span class="badge b-mod">modify</span> <code>src/extension.ts</code></td><td>skynet-harness.openWorker command.</td></tr>
+    <tr><td><span class="badge b-mod">modify</span> <code>package.json</code></td><td>Contribute the openWorker command.</td></tr>
+  </table>
+
+  <div class="divider">The five tasks</div>
+
+  <div class="task">
+    <div class="thd"><span class="ttag">TASK 1</span><span class="ttitle">Domain types + Codex buildInvocation</span></div>
+    <div class="tbd">
+      <div class="files">
+        <span class="badge b-new">types.ts</span><span class="badge b-new">adapters/types.ts</span>
+        <span class="badge b-new">adapters/codex.ts</span><span class="badge b-test">codex.test.ts</span>
+      </div>
+      <p class="mut">The type foundation + the pure argv builder — the first independently testable unit. <code>parseEvents</code> is stubbed here, filled in Task 2.</p>
+      <ul class="check">
+        <li>Write failing tests: argv shape, <code>-m</code> only when model set, env passthrough</li>
+        <li>Run → fail (module not found)</li>
+        <li>Write <code>types.ts</code>, <code>adapters/types.ts</code>, <code>codex.ts</code> (buildInvocation)</li>
+        <li>Run → pass (3 tests)</li>
+        <li>Commit: <code>feat(worker): Codex adapter types + buildInvocation</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="task">
+    <div class="thd"><span class="ttag">TASK 2</span><span class="ttitle">parseEvents — JSONL → normalized WorkerEvent</span></div>
+    <div class="tbd">
+      <div class="files"><span class="badge b-mod">codex.ts</span><span class="badge b-test">codex.test.ts</span></div>
+      <p class="mut">The core logic: line-buffered JSONL across chunk boundaries, skipping noise, mapping thread/turn/item events.</p>
+      <ul class="check">
+        <li>Write failing tests: agent-message turn, command_execution → tool-call, skip noise, split-across-chunks, no-trailing-newline, unknown item → log, error event</li>
+        <li>Run → fail (stub yields nothing)</li>
+        <li>Implement <code>parseCodexEvents</code> + <code>mapCodexEvent</code></li>
+        <li>Run → pass (all parse tests)</li>
+        <li>Commit: <code>feat(worker): parse Codex JSONL into normalized WorkerEvents</code></li>
+      </ul>
+      <pre><code>thread.started   → { type:"started" }            (once)
+item.started     → { type:"tool-call", name:"shell", detail }   (command_execution)
+item.completed   → { type:"agent-message", text }  (agent_message)
+                 → { type:"log", ... }              (unknown item types)
+turn.completed   → { type:"done", lastMessage }
+error/turn.failed→ { type:"error", message, transport:false }</code></pre>
+    </div>
+  </div>
+
+  <div class="task">
+    <div class="thd"><span class="ttag">TASK 3</span><span class="ttitle">runWorker — spawn, stream, cancel, error mapping</span></div>
+    <div class="tbd">
+      <div class="files"><span class="badge b-new">runner.ts</span><span class="badge b-test">runner.test.ts</span></div>
+      <p class="mut">Wires the adapter to a real (or injected) process. Injectable <code>spawnFn</code> makes streaming/cancel/error unit-testable without spawning Codex; a guarded test exercises the real binary end to end.</p>
+      <ul class="check">
+        <li>Write failing tests: streams events, cancel kills, spawn-throw → transport error, non-zero exit → error, real-codex end-to-end (skips if codex absent)</li>
+        <li>Run → fail (module not found)</li>
+        <li>Implement <code>runWorker</code> + <code>defaultSpawn</code> (<code>stdio:["ignore","pipe","pipe"]</code>) + <code>isTransport</code></li>
+        <li>Run → pass (4 unit + 1 integration/skip)</li>
+        <li>Commit: <code>feat(worker): runWorker spawns Codex, streams events, cancels</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="task">
+    <div class="thd"><span class="ttag">TASK 4</span><span class="ttitle">Protocol + panel host wiring</span></div>
+    <div class="tbd">
+      <div class="files"><span class="badge b-mod">protocol.ts</span><span class="badge b-mod">panel.ts</span></div>
+      <p class="mut">Connects the runner to the webview message channel. Verified by type-check (the contract is compile-time) and the Task 5 smoke run.</p>
+      <ul class="check">
+        <li>Extend protocol: <code>runTask</code>, <code>cancelTask</code>, <code>taskEvent</code> (type-only imports from worker/*)</li>
+        <li>Route messages in <code>panel.ts</code>: runTask → runWorker → forward each event; cancelTask → cancel; dispose cancels all</li>
+        <li>Run <code>npm run check-types &amp;&amp; npm run lint</code> → pass</li>
+        <li>Commit: <code>feat(worker): wire runTask/cancelTask/taskEvent through the panel</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="task">
+    <div class="thd"><span class="ttag">TASK 5</span><span class="ttitle">Worker view + registration</span></div>
+    <div class="tbd">
+      <div class="files">
+        <span class="badge b-new">views/worker.tsx</span><span class="badge b-mod">index.tsx</span>
+        <span class="badge b-mod">extension.ts</span><span class="badge b-mod">package.json</span>
+      </div>
+      <p class="mut">The minimal webview UI + command. Verified by build/type-check/lint and a real end-to-end smoke run against Codex.</p>
+      <ul class="check">
+        <li>Create <code>WorkerView</code>: sandbox Select, working-dir + model Inputs, task Textarea, Run/Cancel, streamed output pane</li>
+        <li>Register "worker" in <code>index.tsx</code>; add <code>openWorker</code> command in <code>extension.ts</code> + <code>package.json</code></li>
+        <li><code>npm run compile</code> → pass (type-only worker imports elided from bundle)</li>
+        <li>Manual smoke: F5 → "Skynet: Open Worker" → PONG task → see started / PONG / done; re-run + Cancel</li>
+        <li>Commit: <code>feat(worker): Worker view + openWorker command</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>Out of scope (deferred to later epics):</b> observability/stderr capture, verification gate, soul injection,
+    multi-account credentials, AgentPool / tier fallback, persistence.
+  </div>
+
+  <footer>
+    Plan: docs/superpowers/plans/2026-06-26-worker-epic1-codex-adapter.md ·
+    Markdown is the source of truth; this HTML is the human-readable view.
+  </footer>
+
+</div>
+</body>
+</html>
