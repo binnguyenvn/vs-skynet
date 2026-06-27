@@ -151,5 +151,15 @@ function formatEvent(e: WorkerEvent): string {
       return "done";
     case "error":
       return `error: ${e.message}`;
+    case "reasoning":
+      return `reasoning: ${e.text}`;
+    case "tool-result":
+      return `tool-result: ${e.ok ? "ok" : "fail"}${e.output ? ": " + e.output : ""}`;
+    case "file-change":
+      return `${e.kind}: ${e.path}`;
+    case "usage":
+      return `tokens: in=${e.inputTokens ?? 0} out=${e.outputTokens ?? 0}`;
+    case "verification":
+      return `verification: ${e.ok ? "ok" : "fail"}: ${e.command}`;
   }
 }

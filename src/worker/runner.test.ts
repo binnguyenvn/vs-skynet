@@ -38,7 +38,7 @@ suite("runWorker", () => {
       [
         '{"type":"thread.started","thread_id":"t1"}\n',
         '{"type":"item.completed","item":{"type":"agent_message","text":"PONG"}}\n',
-        '{"type":"turn.completed","usage":{}}\n',
+        '{"type":"turn.completed"}\n',
       ],
       { code: 0 },
     );
