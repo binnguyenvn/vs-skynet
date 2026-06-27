@@ -19,10 +19,15 @@ async function* streamOf(...chunks: string[]): AsyncIterable<Buffer> {
   }
 }
 
-function fakeProcess(lines: string[], exit: { code: number | null; error?: Error }) {
+function fakeProcess(
+  lines: string[],
+  exit: { code: number | null; error?: Error },
+  stderrLines: string[] = [],
+) {
   let killed = false;
   const proc: SpawnedProcess = {
     stdout: streamOf(...lines),
+    stderr: streamOf(...stderrLines),
     kill: () => {
       killed = true;
     },
@@ -30,6 +35,8 @@ function fakeProcess(lines: string[], exit: { code: number | null; error?: Error
   };
   return { proc, wasKilled: () => killed };
 }
+
+const NOW = 1000; // fixed clock for deterministic ts in tests
 
 suite("runWorker", () => {
   test("streams normalized events from the process stdout", async () => {
@@ -42,12 +49,15 @@ suite("runWorker", () => {
       ],
       { code: 0 },
     );
-    const handle = runWorker(worker(), "say pong", (e) => events.push(e), { spawnFn: () => proc });
+    const handle = runWorker(worker(), "say pong", (e) => events.push(e), {
+      spawnFn: () => proc,
+      now: () => NOW,
+    });
     await handle.done;
     assert.deepStrictEqual(events, [
-      { type: "started" },
-      { type: "agent-message", text: "PONG" },
-      { type: "done", lastMessage: "PONG" },
+      { type: "started", ts: NOW },
+      { type: "agent-message", text: "PONG", ts: NOW },
+      { type: "done", lastMessage: "PONG", ts: NOW },
     ]);
   });
 
@@ -77,11 +87,30 @@ suite("runWorker", () => {
   test("emits an error on a non-zero exit code", async () => {
     const events: WorkerEvent[] = [];
     const { proc } = fakeProcess([], { code: 2 });
-    const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc });
+    const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
     await handle.done;
     assert.deepStrictEqual(events, [
-      { type: "error", message: "codex exited with code 2", transport: false },
+      { type: "error", message: "codex exited with code 2", transport: false, ts: NOW },
     ]);
+  });
+
+  test("surfaces child stderr as error log events", async () => {
+    const events: WorkerEvent[] = [];
+    const { proc } = fakeProcess(
+      ['{"type":"turn.completed","usage":{}}\n'],
+      { code: 0 },
+      ["thread 'main' panicked at boom\n", "Reading additional input from stdin...\n"],
+    );
+    const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.ok(
+      events.some((e) => e.type === "log" && e.level === "error" && e.text === "thread 'main' panicked at boom"),
+      "expected the panic line as an error log",
+    );
+    assert.ok(
+      !events.some((e) => e.type === "log" && e.text.includes("Reading additional input")),
+      "the benign stdin notice must be filtered",
+    );
   });
 
   test("real codex: runs a trivial task end to end", async function () {

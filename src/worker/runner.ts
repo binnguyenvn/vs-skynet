@@ -10,6 +10,7 @@ export interface RunHandle {
 
 export interface SpawnedProcess {
   stdout: AsyncIterable<Buffer>;
+  stderr?: AsyncIterable<Buffer>;
   kill(): void;
   exit: Promise<{ code: number | null; error?: Error }>;
 }
@@ -20,6 +21,7 @@ export interface RunDeps {
   spawnFn?: SpawnFn;
   adapter?: AgentAdapter;
   credentials?: Credentials;
+  now?: () => number;
 }
 
 export function runWorker(
@@ -33,27 +35,33 @@ export function runWorker(
   const creds = deps.credentials ?? {};
   const invocation = adapter.buildInvocation(worker, task, creds);
 
+  const now = deps.now ?? Date.now;
+  const emit = (e: WorkerEvent) => onEvent({ ...e, ts: now() });
+
   let proc: SpawnedProcess;
   try {
     proc = spawnFn(invocation);
   } catch (err) {
-    onEvent({ type: "error", message: errString(err), transport: isTransport(err) });
+    emit({ type: "error", message: errString(err), transport: isTransport(err) });
     return { cancel: () => {}, done: Promise.resolve() };
   }
 
   const done = (async () => {
+    const stderrDone = drainStderr(proc.stderr, emit);
     try {
       for await (const event of adapter.parseEvents(proc.stdout)) {
-        onEvent(event);
+        emit(event);
       }
       const exit = await proc.exit;
       if (exit.error) {
-        onEvent({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
+        emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
       } else if (exit.code !== null && exit.code !== 0) {
-        onEvent({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
+        emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
       }
     } catch (err) {
-      onEvent({ type: "error", message: errString(err), transport: isTransport(err) });
+      emit({ type: "error", message: errString(err), transport: isTransport(err) });
+    } finally {
+      await stderrDone;
     }
   })();
 
@@ -72,10 +80,9 @@ function defaultSpawn(inv: Invocation): SpawnedProcess {
     child.on("error", (error) => resolve({ code: null, error }));
     child.on("close", (code) => resolve({ code }));
   });
-  // ponytail: stderr is ignored in Epic 1; the verified failure signal is the exit
-  // code. Capturing stderr lands with Observability (Epic 2).
   return {
     stdout: child.stdout!,
+    stderr: child.stderr ?? undefined,
     kill: () => {
       child.kill();
     },
@@ -92,4 +99,32 @@ function isTransport(err: unknown): boolean {
 
 function errString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+async function drainStderr(
+  stderr: AsyncIterable<Buffer> | undefined,
+  emit: (e: WorkerEvent) => void,
+): Promise<void> {
+  if (!stderr) {
+    return;
+  }
+  let buffer = "";
+  for await (const chunk of stderr) {
+    buffer += chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      emitStderrLine(buffer.slice(0, nl), emit);
+      buffer = buffer.slice(nl + 1);
+    }
+  }
+  emitStderrLine(buffer, emit);
+}
+
+function emitStderrLine(line: string, emit: (e: WorkerEvent) => void): void {
+  const text = line.trim();
+  // ponytail: this notice is benign (stdin is /dev/null) and just noise — drop it.
+  if (!text || text.startsWith("Reading additional input from stdin")) {
+    return;
+  }
+  emit({ type: "log", level: "error", text });
 }
