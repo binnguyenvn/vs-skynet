@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
-import { WorkerView } from "@/views/worker";
 import { HelloView } from "@/integration-test/hello";
 import { GalleryView } from "@/integration-test/gallery";
+import { WorkerView } from "@/integration-test/worker";
 
 declare global {
   interface Window {
