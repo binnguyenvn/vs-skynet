@@ -64,9 +64,50 @@ export function runWorker(
   let pendingDone: Extract<WorkerEvent, { type: "done" }> | null = null;
 
   const done = (async () => {
+    const harness = worker.harness;
+    let toolCalls = 0;
+    let stopReason: "steps" | "timeout" | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // ponytail: abortSignal lets the timer interrupt a blocking iter.next()
+    // (e.g. hang() in the timeout test) without racing proc.exit against events.
+    // Steps cap triggers abortResolve inline; timeout timer triggers it from closure.
+    let abortResolve!: () => void;
+    const abortSignal = new Promise<void>((r) => { abortResolve = r; });
+    const ABORTED = Symbol("aborted");
+
+    if (harness.timeoutMs && harness.timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (stopReason === null) {
+          stopReason = "timeout";
+          proc.kill();
+          abortResolve();
+        }
+      }, harness.timeoutMs);
+    }
+
     const stderrDone = drainStderr(proc.stderr, emit);
     try {
-      for await (const event of adapter.parseEvents(proc.stdout)) {
+      const iter = adapter.parseEvents(proc.stdout)[Symbol.asyncIterator]();
+      while (true) {
+        if (stopReason !== null) { break; }
+        const raced = await Promise.race([
+          iter.next(),
+          abortSignal.then(() => ABORTED),
+        ]);
+        if (raced === ABORTED) { break; }
+        const result = raced as IteratorResult<WorkerEvent>;
+        if (result.done) { break; }
+        const event = result.value;
+        if (event.type === "tool-call") {
+          toolCalls++;
+          if (harness.maxSteps && toolCalls > harness.maxSteps) {
+            stopReason = "steps";
+            emit(event);
+            proc.kill();
+            break;
+          }
+        }
         if (event.type === "done") {
           pendingDone = event;
           continue;
@@ -74,18 +115,22 @@ export function runWorker(
         emit(event);
       }
       const exit = await proc.exit;
-      if (exit.error) {
+      if (stopReason === "steps") {
+        emit({ type: "error", message: `step cap (${harness.maxSteps}) exceeded`, transport: false });
+      } else if (stopReason === "timeout") {
+        emit({ type: "error", message: `timeout (${harness.timeoutMs}ms) exceeded`, transport: false });
+      } else if (exit.error) {
         emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
       } else if (exit.code !== null && exit.code !== 0) {
         emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
       } else if (pendingDone) {
-        const checks = worker.harness.verification ?? [];
+        const checks = harness.verification ?? [];
         if (checks.length === 0) {
           emit(pendingDone);
         } else {
           let verified = true;
           for (const check of checks) {
-            const r = await verifyFn(check.command, worker.harness.workingDir);
+            const r = await verifyFn(check.command, harness.workingDir);
             emit({ type: "verification", command: check.command, ok: r.ok, output: r.output });
             if (!r.ok) {
               verified = false;
@@ -97,6 +142,7 @@ export function runWorker(
     } catch (err) {
       emit({ type: "error", message: errString(err), transport: isTransport(err) });
     } finally {
+      if (timer) { clearTimeout(timer); }
       await stderrDone;
     }
   })();

@@ -153,6 +153,50 @@ suite("runWorker", () => {
     assert.deepStrictEqual(events, [{ type: "done", lastMessage: undefined, ts: NOW }]);
   });
 
+  test("kills and errors when the step cap is exceeded", async () => {
+    const events: WorkerEvent[] = [];
+    const w = worker();
+    w.harness.maxSteps = 1;
+    const { proc, wasKilled } = fakeProcess(
+      [
+        '{"type":"item.started","item":{"id":"a","type":"command_execution","command":"echo 1"}}\n',
+        '{"type":"item.started","item":{"id":"b","type":"command_execution","command":"echo 2"}}\n',
+        '{"type":"turn.completed","usage":{}}\n',
+      ],
+      { code: null },
+    );
+    const handle = runWorker(w, "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.strictEqual(wasKilled(), true);
+    const err = events.find((e) => e.type === "error") as { message: string } | undefined;
+    assert.strictEqual(err?.message, "step cap (1) exceeded");
+    assert.ok(!events.some((e) => e.type === "done"), "no done after a cap kill");
+  });
+
+  test("kills and errors when the wall-clock timeout fires", async () => {
+    const events: WorkerEvent[] = [];
+    const w = worker();
+    w.harness.timeoutMs = 5;
+    // a stdout that never ends until killed
+    async function* hang(): AsyncIterable<Buffer> {
+      await new Promise((r) => setTimeout(r, 1000));
+      yield Buffer.from('{"type":"turn.completed","usage":{}}\n');
+    }
+    let killed = false;
+    const proc: SpawnedProcess = {
+      stdout: hang(),
+      kill: () => {
+        killed = true;
+      },
+      exit: new Promise((resolve) => setTimeout(() => resolve({ code: null }), 20)),
+    };
+    const handle = runWorker(w, "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.strictEqual(killed, true);
+    const err = events.find((e) => e.type === "error") as { message: string } | undefined;
+    assert.strictEqual(err?.message, "timeout (5ms) exceeded");
+  });
+
   test("real codex: runs a trivial task end to end", async function () {
     const available = spawnSync("codex", ["--version"]).status === 0;
     if (!available) {

@@ -24,8 +24,10 @@ export interface Agent {
 export interface Harness {
   sandbox: SandboxMode;
   workingDir: string;
+  writableRoots?: string[]; // extra --add-dir writable roots (Epic 2)
   verification?: { command: string; label?: string }[]; // independent checks run AFTER the agent's done (Epic 2)
-  // ponytail: writableRoots/maxSteps/timeoutMs added in US-3 of this epic.
+  maxSteps?: number; // circuit breaker: max tool-call events before kill (Epic 2)
+  timeoutMs?: number; // circuit breaker: wall-clock kill (Epic 2)
 }
 
 export interface Soul {
