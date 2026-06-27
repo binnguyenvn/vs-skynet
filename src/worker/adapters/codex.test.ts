@@ -55,6 +55,14 @@ suite("codexAdapter.buildInvocation", () => {
     const i = inv.args.indexOf("-c");
     assert.ok(i >= 0 && inv.args[i + 1] === "model_reasoning_summary=auto", "expected -c model_reasoning_summary=auto");
   });
+
+  test("appends --add-dir for each writable root", () => {
+    const w = sampleWorker();
+    w.harness.writableRoots = ["/extra/one", "/extra/two"];
+    const inv = codexAdapter.buildInvocation(w, "t", {});
+    const flags = inv.args.filter((_, i) => inv.args[i - 1] === "--add-dir");
+    assert.deepStrictEqual(flags, ["/extra/one", "/extra/two"]);
+  });
 });
 
 async function* streamOf(...chunks: string[]): AsyncIterable<Buffer> {

@@ -22,6 +22,9 @@ export const codexAdapter: AgentAdapter = {
       "-c",
       "model_reasoning_summary=auto",
     ];
+    for (const root of harness.writableRoots ?? []) {
+      args.push("--add-dir", root);
+    }
     if (agent.model) {
       args.push("-m", agent.model);
     }

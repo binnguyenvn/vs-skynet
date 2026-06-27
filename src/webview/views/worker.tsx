@@ -27,6 +27,9 @@ export function WorkerView() {
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<WorkerEvent[]>([]);
   const [verifyCommands, setVerifyCommands] = useState<string[]>([]);
+  const [maxSteps, setMaxSteps] = useState("");
+  const [timeoutSec, setTimeoutSec] = useState("");
+  const [writableDirs, setWritableDirs] = useState("");
 
   useEffect(
     () =>
@@ -54,6 +57,9 @@ export function WorkerView() {
         sandbox,
         workingDir: workingDir.trim(),
         verification: verifyCommands.map((c) => c.trim()).filter(Boolean).map((command) => ({ command })),
+        writableRoots: writableDirs.split(",").map((d) => d.trim()).filter(Boolean),
+        maxSteps: maxSteps.trim() ? Number(maxSteps) : undefined,
+        timeoutMs: timeoutSec.trim() ? Number(timeoutSec) * 1000 : undefined,
       },
       // ponytail: Epic 1 has no soul behavior; a placeholder keeps the type valid.
       soul: { role: "developer", identity: "", responsibilities: [] },
@@ -107,6 +113,21 @@ export function WorkerView() {
           onChange={(e) => setWorkingDir(e.target.value)}
           placeholder="/absolute/path"
         />
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="worker-maxsteps">Max steps</Label>
+          <Input id="worker-maxsteps" value={maxSteps} onChange={(e) => setMaxSteps(e.target.value)} placeholder="∞" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="worker-timeout">Timeout (s)</Label>
+          <Input id="worker-timeout" value={timeoutSec} onChange={(e) => setTimeoutSec(e.target.value)} placeholder="∞" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="worker-writable">Extra writable dirs (comma-sep)</Label>
+          <Input id="worker-writable" value={writableDirs} onChange={(e) => setWritableDirs(e.target.value)} placeholder="/path/a,/path/b" />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
