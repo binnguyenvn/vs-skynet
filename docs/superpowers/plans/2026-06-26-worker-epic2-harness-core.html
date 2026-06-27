@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker — Epic 2: Harness Core — Implementation Plan</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--line:#30363d;--tx:#e6edf3;--mut:#9aa7b4;
+    --acc:#58a6ff;--grn:#3fb950;--yel:#d29922;--red:#f85149;--pur:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1020px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16.5px;margin:30px 0 8px;color:var(--acc)}
+  h4{font-size:14px;margin:18px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  p{color:var(--tx)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.85em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  pre code{background:none;padding:0;color:#c9d6e3}
+  blockquote{border-left:3px solid var(--yel);background:var(--panel2);margin:14px 0;
+    padding:10px 16px;border-radius:0 8px 8px 0;color:var(--mut);font-size:14px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td code,th code{color:#c9d6e3}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+  .task{display:flex;gap:9px;align-items:flex-start;margin:5px 0;padding:5px 10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:7px}
+  .task input{margin-top:3px}
+  strong{color:var(--tx)}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Worker — Epic 2: Harness Core Implementation Plan</h1>
+<blockquote><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</blockquote>
+<p><strong>Goal:</strong> Turn Epic 1's raw Codex bridge into a *reliable* Worker: it shows exactly what it's doing (Observability), refuses to claim "done" without passing independent checks (Verification), and can be capped in what it spends and touches (Guardrails).</p>
+<p><strong>Architecture:</strong> Three vertical slices on top of Epic 1's <code>src/worker/</code> module, each behind the CLI-agnostic contract. Observability grows the normalized <code>WorkerEvent</code> union and the Codex <code>parseEvents</code> mapping (reasoning, paired tool-result, file-change, usage), captures the child's stderr, and renders an event-typed timeline. Verification adds an optional list of independent shell checks the runner executes *after* the agent's <code>done</code>, gating a <code>verified</code> flag. Guardrails make the runner a circuit breaker (step cap + wall-clock cap → <code>kill()</code>) and expose the full sandbox + writable-roots controls. Only the Codex adapter is CLI-specific; the contract and runner are reused by Epic 4 (more CLIs) and Epic 5 (HTTP loop).</p>
+<p><strong>Tech Stack:</strong> TypeScript, Node <code>child_process</code>, VS Code extension API, React 19 + shadcn/ui (webview), Mocha via <code>@vscode/test-cli</code> (<code>suite</code>/<code>test</code>/<code>assert</code>).</p>
+<h2>Global Constraints</h2>
+<ul><li><strong>Verified Codex facts (codex-cli 0.142.3, confirmed against the installed binary on this machine — do NOT trust <code>docs/research/</code>):</strong></li><li>Invocation today: <code>codex exec --json -s &lt;mode&gt; -C &lt;dir&gt; [-m &lt;model&gt;] --skip-git-repo-check "&lt;task&gt;"</code>.</li><li><code>codex exec --help</code> confirms these flags exist: <code>-s/--sandbox</code>, <code>-C/--cd</code>, <code>--add-dir &lt;DIR&gt;</code> (repeatable, adds an extra writable root), <code>-m/--model</code>, <code>--json</code>, <code>--skip-git-repo-check</code>.</li><li><code>--json</code> streams <strong>JSONL</strong>, one JSON object per line; non-JSON noise lines also appear (e.g. <code>Reading additional input from stdin...</code>) and MUST be skipped.</li><li>Envelope is a <strong>thread/turn/item</strong> model: <code>{"type":"thread.started","thread_id":...}</code>, <code>{"type":"turn.started"}</code>, <code>{"type":"item.started","item":{...}}</code>, <code>{"type":"item.completed","item":{...}}</code>, <code>{"type":"turn.completed","usage":{...}}</code>. <code>turn.completed</code> is the terminal marker — there is <strong>no</strong> separate <code>done</code> event.</li><li>Item shapes (Codex <code>exec_events</code>): <code>agent_message</code> = <code>{id, type:"agent_message", text}</code>; <code>reasoning</code> = <code>{id, type:"reasoning", text}</code>; <code>command_execution</code> = <code>{id, type:"command_execution", command, aggregated_output, exit_code, status}</code> (emitted as <code>item.started</code> then <code>item.completed</code>); <code>file_change</code> = <code>{id, type:"file_change", changes:[{path, kind}]}</code>; <code>usage</code> on <code>turn.completed</code> = <code>{input_tokens, cached_input_tokens, output_tokens, ...}</code>.</li><li><strong>Errors arrive two ways</strong> (verified live this session): a bare <code>{"type":"error","message":...}</code> (e.g. transient <code>Reconnecting... 2/5 (request timed out)</code>) <strong>and</strong> an <code>item.completed</code> whose <code>item.type</code> is <code>"error"</code> carrying <code>{id, message, type}</code>. Both map to an <code>error</code> <code>WorkerEvent</code>.</li><li>Codex reports token usage <strong>only at <code>turn.completed</code></strong> (the end) — a mid-run token budget is NOT enforceable from the stream and is explicitly deferred to Epic 5.</li><li><code>-s/--sandbox</code> ∈ <code>{read-only, workspace-write, danger-full-access}</code>. Network is off by default in the sandbox.</li><li>Spawn with <code>stdio: ["ignore", "pipe", "pipe"]</code> — an open stdin makes Codex block on <code>Reading additional input from stdin...</code>.</li><li><strong>No auto-repair / re-prompt in Epic 2.</strong> The verification gate makes the truth *visible* (<code>verified: false</code>); acting on a failed check (re-prompting) is a loop the Orchestrator owns (Epic 3+).</li><li><strong>No soul system in Epic 2</strong> — task string is still passed through raw (soul injection is Epic 3).</li><li><strong>CLI-agnostic contract.</strong> Every <code>WorkerEvent</code> addition and every <code>Harness</code> field is defined in the node-free type files; only <code>codex.ts</code> maps Codex-specific shapes. Nothing Codex-specific leaks into <code>runner.ts</code> or <code>protocol.ts</code>.</li><li><strong>Type files stay node-free.</strong> <code>src/worker/types.ts</code> and <code>src/worker/adapters/types.ts</code> import only types, so <code>src/webview/protocol.ts</code> can <code>import type</code> from them without pulling <code>child_process</code> into the webview bundle.</li><li><strong>Tests</strong> are colocated <code>*.test.ts</code>, compile to <code>out/**/*.test.js</code>, run with <code>npm test</code> (Mocha <code>suite</code>/<code>test</code>/<code>assert</code>). Webview React components have <strong>no</strong> unit-test harness in this repo (Epic 1 set the precedent: <code>worker.tsx</code> is type-checked + manually smoked, not unit-tested) — webview tasks end with <code>npm run check-types</code> + <code>npm run lint</code> + a manual smoke checklist.</li><li><strong>Gates:</strong> <code>npm run check-types</code> and <code>npm run lint</code> must pass before every commit.</li></ul>
+<hr>
+<h2>File Structure</h2>
+<table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody><tr><td><code>src/worker/adapters/types.ts</code> *(modify)*</td><td>Grow <code>WorkerEvent</code> union: <code>reasoning</code>, <code>tool-result</code>, <code>file-change</code>, <code>usage</code>, <code>verification</code>; add <code>id</code> to <code>tool-call</code>, <code>verified</code> to <code>done</code>; add optional <code>ts</code> to every event.</td></tr><tr><td><code>src/worker/types.ts</code> *(modify)*</td><td>Grow <code>Harness</code>: <code>writableRoots?</code>, <code>verification?</code>, <code>maxSteps?</code>, <code>timeoutMs?</code>.</td></tr><tr><td><code>src/worker/adapters/fixtures/epic2-stream.jsonl</code> *(create)*</td><td>Real captured Codex JSONL ground truth (reasoning + failing command + file edit).</td></tr><tr><td><code>src/worker/adapters/codex.ts</code> *(modify)*</td><td>Richer <code>parseEvents</code> mapping (reasoning, tool-result paired by id, file-change, usage, item-level error); <code>buildInvocation</code> adds <code>--add-dir</code> per writable root.</td></tr><tr><td><code>src/worker/adapters/codex.test.ts</code> *(modify)*</td><td>New parser cases + <code>--add-dir</code> argv case.</td></tr><tr><td><code>src/worker/runner.ts</code> *(modify)*</td><td>Stamp <code>ts</code>; drain child stderr → <code>log</code>; circuit breaker (<code>maxSteps</code>, <code>timeoutMs</code> → <code>kill</code>); post-<code>done</code> verification gate via injectable <code>verifyFn</code>.</td></tr><tr><td><code>src/worker/runner.test.ts</code> *(modify)*</td><td>Update existing assertions for <code>ts</code>; add stderr, step-cap, timeout, verification cases.</td></tr><tr><td><code>src/webview/views/worker.tsx</code> *(modify)*</td><td>Event-typed timeline; verification command inputs + badges; caps + writable-dirs inputs.</td></tr></tbody></table>
+<p><code>src/webview/protocol.ts</code> needs <strong>no change</strong> — it already carries <code>Worker</code> (so new <code>Harness</code> fields flow through <code>runTask</code>) and <code>WorkerEvent</code> (so new events flow through <code>taskEvent</code>).</p>
+<hr>
+<h2>US-1: Observability — the timeline shows the real run</h2>
+<p><strong>What it does:</strong> When you run a task, the Worker surfaces everything Codex actually does — its reasoning, each command and its exit code/output, every file it changed, token usage, and any diagnostics on stderr — instead of Epic 1's bland flattened log. The webview renders this as a typed timeline.</p>
+<p><strong>Why it's a vertical slice:</strong> It threads the new event types from the Codex stream (data) through the parser and runner (logic) to the timeline (UI). Runnable on its own: run a task, watch the rich timeline.</p>
+<hr>
+<h3>Task 1: Capture richer Codex ground-truth fixture</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Create: <code>src/worker/adapters/fixtures/epic2-stream.jsonl</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: a committed real JSONL stream containing at least one <code>reasoning</code> item, one <code>command_execution</code> with a <strong>non-zero</strong> <code>exit_code</code>, and one <code>file_change</code> item — the ground truth Task 2's mappings are copied from. (Spec §11: verify against reality, never memory.)</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Capture a real stream into the fixture file</strong></span></div>
+<p>Run a Codex task in a throwaway dir that reasons, runs a failing command, and edits a file. Redirect stdin from <code>/dev/null</code> (else Codex blocks on stdin):</p>
+<pre class="lang-bash"><code>mkdir -p src/worker/adapters/fixtures
+TMP="$(mktemp -d)"; ( cd "$TMP" &amp;&amp; git init -q )
+codex exec --json -s workspace-write -C "$TMP" --skip-git-repo-check \
+  "First reason briefly about the steps. Then run the shell command: ls /nonexistent-xyz (it will fail with a non-zero exit code). Then create a file hello.txt containing the word hi. Then stop." \
+  &lt;/dev/null &gt; src/worker/adapters/fixtures/epic2-stream.jsonl
+rm -rf "$TMP"</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Verify the fixture exercises the three new item types</strong></span></div>
+<p>Run (this is the task's runnable check):</p>
+<pre class="lang-bash"><code>node -e 'const fs=require("fs");const t=t=&gt;fs.readFileSync("src/worker/adapters/fixtures/epic2-stream.jsonl","utf8").split("\n").filter(Boolean).map(JSON.parse).some(o=&gt;o.item&amp;&amp;o.item.type===t);for(const k of ["reasoning","command_execution","file_change"]){if(!t(k)){console.error("MISSING item type:",k);process.exit(1)}}console.log("fixture OK: has reasoning, command_execution, file_change")'</code></pre>
+<p>Expected: <code>fixture OK: has reasoning, command_execution, file_change</code>. If any type is missing (e.g. the model didn't reason out loud, or refused the command), re-run Step 1 with a sharper prompt until all three appear. <strong>Do not hand-edit the fixture</strong> — it must be real Codex output.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Note the exact field names you'll map in Task 2</strong></span></div>
+<p>Inspect the real item shapes so Task 2 uses the actual keys, not these notes:</p>
+<pre class="lang-bash"><code>node -e 'const fs=require("fs");fs.readFileSync("src/worker/adapters/fixtures/epic2-stream.jsonl","utf8").split("\n").filter(Boolean).map(JSON.parse).filter(o=&gt;o.item).forEach(o=&gt;console.log(o.type,"|",o.item.type,"|",Object.keys(o.item).join(",")))'</code></pre>
+<p>Expected: lines confirming <code>command_execution</code> carries <code>command, aggregated_output, exit_code, status</code>; <code>file_change</code> carries <code>changes</code>; <code>reasoning</code> carries <code>text</code>; <code>turn.completed</code> carries <code>usage</code>. If a field name differs from the Global Constraints, the <strong>captured fixture wins</strong> — update Task 2's code to the real name.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/adapters/fixtures/epic2-stream.jsonl
+git commit -m "test(worker): capture richer Codex ground-truth fixture for Epic 2"</code></pre>
+<hr>
+<h3>Task 2: Expand <code>WorkerEvent</code> + Codex <code>parseEvents</code></h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/worker/adapters/types.ts</code></li><li>Modify: <code>src/worker/adapters/codex.ts</code></li><li>Test: <code>src/worker/adapters/codex.test.ts</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: the Epic 1 envelope facts + Task 1 fixture.</li><li>Produces: the grown <code>WorkerEvent</code> union (below) and a <code>parseEvents</code> that emits <code>reasoning</code>, <code>tool-result</code> (paired with <code>tool-call</code> by item <code>id</code>), <code>file-change</code> (one per change), and <code>usage</code>. <code>parseEvents</code> stays <strong>pure</strong> (no clock, no <code>ts</code>); the runner stamps <code>ts</code> in Task 3.</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Write the failing tests</strong></span></div>
+<p>Add to <code>src/worker/adapters/codex.test.ts</code> (inside the existing <code>suite("codexAdapter.parseEvents", ...)</code>), using lines copied from the Task 1 fixture:</p>
+<pre class="lang-ts"><code>test("maps a reasoning item to a reasoning event", async () =&gt; {
+  const events = await collect(
+    codexAdapter.parseEvents(
+      streamOf('{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"I will list the file."}}\n'),
+    ),
+  );
+  assert.deepStrictEqual(events, [{ type: "reasoning", text: "I will list the file." }]);
+});
+
+test("pairs command_execution start/completion into tool-call + tool-result by id", async () =&gt; {
+  const lines = [
+    '{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"ls /nope","status":"in_progress"}}\n',
+    '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"ls /nope","aggregated_output":"ls: /nope: No such file or directory\\n","exit_code":1,"status":"completed"}}\n',
+  ];
+  const events = await collect(codexAdapter.parseEvents(streamOf(...lines)));
+  assert.deepStrictEqual(events, [
+    { type: "tool-call", id: "item_1", name: "shell", detail: "ls /nope" },
+    { type: "tool-result", id: "item_1", exitCode: 1, ok: false, output: "ls: /nope: No such file or directory" },
+  ]);
+});
+
+test("maps a file_change item to one file-change event per change", async () =&gt; {
+  const line =
+    '{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"hello.txt","kind":"add"}]}}\n';
+  const events = await collect(codexAdapter.parseEvents(streamOf(line)));
+  assert.deepStrictEqual(events, [{ type: "file-change", path: "hello.txt", kind: "add" }]);
+});
+
+test("emits a usage event then done at turn.completed", async () =&gt; {
+  const line =
+    '{"type":"turn.completed","usage":{"input_tokens":120,"cached_input_tokens":40,"output_tokens":30}}\n';
+  const events = await collect(codexAdapter.parseEvents(streamOf(line)));
+  assert.deepStrictEqual(events, [
+    { type: "usage", inputTokens: 120, cachedInputTokens: 40, outputTokens: 30 },
+    { type: "done", lastMessage: undefined },
+  ]);
+});
+
+test("maps an item.completed error to an error event", async () =&gt; {
+  const line =
+    '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Falling back from WebSockets to HTTPS transport."}}\n';
+  const events = await collect(codexAdapter.parseEvents(streamOf(line)));
+  assert.deepStrictEqual(events, [
+    { type: "error", message: "Falling back from WebSockets to HTTPS transport.", transport: false },
+  ]);
+});</code></pre>
+<p>Also update the existing <strong>"surfaces unknown item types as a log"</strong> test — <code>reasoning</code> is no longer the unknown example. Replace its input item type with a genuinely unmapped one:</p>
+<pre class="lang-ts"><code>test("surfaces unknown item types as a log", async () =&gt; {
+  const events = await collect(
+    codexAdapter.parseEvents(
+      streamOf('{"type":"item.completed","item":{"type":"web_search","query":"x"}}\n'),
+    ),
+  );
+  assert.deepStrictEqual(events, [{ type: "log", level: "info", text: "web_search" }]);
+});</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Run the tests to verify they fail</strong></span></div>
+<p>Run: <code>npm test</code> Expected: the new <code>parseEvents</code> cases FAIL (e.g. reasoning still maps to <code>log</code>, command completion returns <code>null</code>, no <code>usage</code> event).</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Grow the <code>WorkerEvent</code> union</strong></span></div>
+<p>In <code>src/worker/adapters/types.ts</code>, replace the <code>WorkerEvent</code> type with (additions marked <code>// +</code>):</p>
+<pre class="lang-ts"><code>export type WorkerEvent = (
+  | { type: "started" }
+  | { type: "agent-message"; text: string }
+  | { type: "reasoning"; text: string } // +
+  | { type: "tool-call"; id?: string; name: string; detail?: string } // + id
+  | { type: "tool-result"; id?: string; exitCode?: number; ok: boolean; output?: string } // +
+  | { type: "file-change"; path: string; kind: string } // +
+  | { type: "usage"; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } // +
+  | { type: "log"; level: "info" | "warn" | "error"; text: string }
+  | { type: "verification"; command: string; ok: boolean; output?: string } // + (US-2)
+  | { type: "decision-request"; questions: DecisionAsk[] }
+  | { type: "done"; lastMessage?: string; verified?: boolean } // + verified (US-2)
+  | { type: "error"; message: string; transport?: boolean } // transport=true -&gt; fallback-eligible (Epic 6)
+) &amp; { ts?: number }; // + every event optionally carries a runner-stamped emit timestamp</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Rewrite the Codex item mapping</strong></span></div>
+<p>In <code>src/worker/adapters/codex.ts</code>, change <code>mapCodexEvent</code> to allow multiple events per envelope and add the new item mappings. Replace the <code>CodexItem</code> interface and <code>mapCodexEvent</code> with:</p>
+<pre class="lang-ts"><code>interface CodexItem {
+  id?: string;
+  type?: string;
+  text?: string;
+  command?: string;
+  aggregated_output?: string;
+  exit_code?: number;
+  message?: string;
+  changes?: { path?: string; kind?: string }[];
+  [k: string]: unknown;
+}
+
+interface CodexUsage {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+}
+
+const MAX_OUTPUT = 4000; // ponytail: cap tool/command output so one event can't be a megabyte
+
+function truncate(s: string): string {
+  return s.length &gt; MAX_OUTPUT ? s.slice(0, MAX_OUTPUT) + "\n…(truncated)" : s;
+}
+
+function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | WorkerEvent[] | null {
+  switch (obj.type) {
+    case "thread.started":
+      if (state.started) {
+        return null;
+      }
+      state.started = true;
+      return { type: "started" };
+    case "item.started": {
+      const item = obj.item;
+      if (item?.type === "command_execution") {
+        return {
+          type: "tool-call",
+          id: item.id,
+          name: "shell",
+          detail: typeof item.command === "string" ? item.command : undefined,
+        };
+      }
+      return null;
+    }
+    case "item.completed": {
+      const item = obj.item;
+      if (!item?.type) {
+        return null;
+      }
+      if (item.type === "agent_message" &amp;&amp; typeof item.text === "string") {
+        state.lastMessage = item.text;
+        return { type: "agent-message", text: item.text };
+      }
+      if (item.type === "reasoning" &amp;&amp; typeof item.text === "string") {
+        return { type: "reasoning", text: item.text };
+      }
+      if (item.type === "command_execution") {
+        return {
+          type: "tool-result",
+          id: item.id,
+          exitCode: item.exit_code,
+          ok: item.exit_code === 0,
+          output: typeof item.aggregated_output === "string" ? truncate(item.aggregated_output.trim()) : undefined,
+        };
+      }
+      if (item.type === "file_change" &amp;&amp; Array.isArray(item.changes)) {
+        return item.changes
+          .filter((c) =&gt; typeof c.path === "string")
+          .map((c) =&gt; ({ type: "file-change", path: c.path as string, kind: c.kind ?? "modify" }));
+      }
+      if (item.type === "error") {
+        return { type: "error", message: item.message ?? "unknown codex error", transport: false };
+      }
+      // ponytail: still unmapped (e.g. mcp_tool_call, web_search) — surfaced as a log. Map when a
+      // fixture proves their real shapes (Epic 4 touches MCP); the field names aren't verified yet.
+      return { type: "log", level: "info", text: item.type };
+    }
+    case "turn.completed": {
+      const usage = obj.usage as CodexUsage | undefined;
+      const done: WorkerEvent = { type: "done", lastMessage: state.lastMessage };
+      if (!usage) {
+        return done;
+      }
+      return [
+        {
+          type: "usage",
+          inputTokens: usage.input_tokens,
+          cachedInputTokens: usage.cached_input_tokens,
+          outputTokens: usage.output_tokens,
+        },
+        done,
+      ];
+    }
+    case "error":
+    case "turn.failed":
+      return { type: "error", message: errorMessage(obj), transport: false };
+    default:
+      return null;
+  }
+}</code></pre>
+<p>Add <code>usage?: unknown;</code> to the <code>CodexEvent</code> interface. Then update the generator and <code>parseLine</code> to flatten arrays. Change <code>parseCodexEvents</code> and <code>parseLine</code>:</p>
+<pre class="lang-ts"><code>async function* parseCodexEvents(raw: AsyncIterable&lt;Buffer&gt;): AsyncIterable&lt;WorkerEvent&gt; {
+  const state: ParseState = { started: false };
+  let buffer = "";
+  for await (const chunk of raw) {
+    buffer += chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) &gt;= 0) {
+      yield* parseLine(buffer.slice(0, nl), state);
+      buffer = buffer.slice(nl + 1);
+    }
+  }
+  yield* parseLine(buffer, state);
+}
+
+function* parseLine(line: string, state: ParseState): Generator&lt;WorkerEvent&gt; {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+  let obj: CodexEvent;
+  try {
+    obj = JSON.parse(trimmed) as CodexEvent;
+  } catch {
+    return; // noise line (e.g. "Reading additional input from stdin...")
+  }
+  const mapped = mapCodexEvent(obj, state);
+  if (Array.isArray(mapped)) {
+    yield* mapped;
+  } else if (mapped) {
+    yield mapped;
+  }
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Run the tests to verify they pass</strong></span></div>
+<p>Run: <code>npm test</code> Expected: all <code>parseEvents</code> tests PASS (new + existing, including the updated unknown-item-type test).</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 6: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/adapters/types.ts src/worker/adapters/codex.ts src/worker/adapters/codex.test.ts
+git commit -m "feat(worker): observability events — reasoning, tool-result, file-change, usage"</code></pre>
+<hr>
+<h3>Task 3: Runner — stamp <code>ts</code>, capture child stderr</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/worker/runner.ts</code></li><li>Test: <code>src/worker/runner.test.ts</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>WorkerEvent</code> (with optional <code>ts</code>), <code>SpawnedProcess</code> from Epic 1.</li><li>Produces: <code>SpawnedProcess</code> gains optional <code>stderr: AsyncIterable&lt;Buffer&gt;</code>; <code>RunDeps</code> gains <code>now?: () =&gt; number</code>. Every event reaching <code>onEvent</code> carries <code>ts</code>. Child stderr lines surface as <code>{ type: "log", level: "error", text }</code> (the benign <code>Reading additional input from stdin...</code> line is filtered).</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Write the failing tests</strong></span></div>
+<p>In <code>src/worker/runner.test.ts</code>, update <code>fakeProcess</code> to accept optional stderr lines and update the existing assertions to include <code>ts</code>. Replace <code>fakeProcess</code>:</p>
+<pre class="lang-ts"><code>function fakeProcess(
+  lines: string[],
+  exit: { code: number | null; error?: Error },
+  stderrLines: string[] = [],
+) {
+  let killed = false;
+  const proc: SpawnedProcess = {
+    stdout: streamOf(...lines),
+    stderr: streamOf(...stderrLines),
+    kill: () =&gt; {
+      killed = true;
+    },
+    exit: Promise.resolve(exit),
+  };
+  return { proc, wasKilled: () =&gt; killed };
+}
+
+const NOW = 1000; // fixed clock for deterministic ts in tests</code></pre>
+<p>Update the existing <strong>"streams normalized events"</strong> test to pass the clock and expect <code>ts</code>:</p>
+<pre class="lang-ts"><code>const handle = runWorker(worker(), "say pong", (e) =&gt; events.push(e), {
+  spawnFn: () =&gt; proc,
+  now: () =&gt; NOW,
+});
+await handle.done;
+assert.deepStrictEqual(events, [
+  { type: "started", ts: NOW },
+  { type: "agent-message", text: "PONG", ts: NOW },
+  { type: "done", lastMessage: "PONG", ts: NOW },
+]);</code></pre>
+<p>Update the existing <strong>"emits an error on a non-zero exit code"</strong> test the same way (add <code>now: () =&gt; NOW</code>, expect <code>{ type: "error", message: "codex exited with code 2", transport: false, ts: NOW }</code>). The two <code>transport</code>-flag tests assert on <code>events[0].type</code>/<code>.transport</code> only, so they need no <code>ts</code> change.</p>
+<p>Add a new stderr test:</p>
+<pre class="lang-ts"><code>test("surfaces child stderr as error log events", async () =&gt; {
+  const events: WorkerEvent[] = [];
+  const { proc } = fakeProcess(
+    ['{"type":"turn.completed","usage":{}}\n'],
+    { code: 0 },
+    ["thread 'main' panicked at boom\n", "Reading additional input from stdin...\n"],
+  );
+  const handle = runWorker(worker(), "t", (e) =&gt; events.push(e), { spawnFn: () =&gt; proc, now: () =&gt; NOW });
+  await handle.done;
+  assert.ok(
+    events.some((e) =&gt; e.type === "log" &amp;&amp; e.level === "error" &amp;&amp; e.text === "thread 'main' panicked at boom"),
+    "expected the panic line as an error log",
+  );
+  assert.ok(
+    !events.some((e) =&gt; e.type === "log" &amp;&amp; e.text.includes("Reading additional input")),
+    "the benign stdin notice must be filtered",
+  );
+});</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Run the tests to verify they fail</strong></span></div>
+<p>Run: <code>npm test</code> Expected: FAIL — events lack <code>ts</code>, and no stderr log events are emitted.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Add the clock + stderr drain to the runner</strong></span></div>
+<p>In <code>src/worker/runner.ts</code>, add <code>stderr</code> to <code>SpawnedProcess</code> and <code>now</code> to <code>RunDeps</code>:</p>
+<pre class="lang-ts"><code>export interface SpawnedProcess {
+  stdout: AsyncIterable&lt;Buffer&gt;;
+  stderr?: AsyncIterable&lt;Buffer&gt;;
+  kill(): void;
+  exit: Promise&lt;{ code: number | null; error?: Error }&gt;;
+}
+
+export interface RunDeps {
+  spawnFn?: SpawnFn;
+  adapter?: AgentAdapter;
+  credentials?: Credentials;
+  now?: () =&gt; number;
+}</code></pre>
+<p>Rewrite the body of <code>runWorker</code> (the <code>done</code> IIFE) to stamp <code>ts</code> through a single <code>emit</code> choke point and drain stderr concurrently:</p>
+<pre class="lang-ts"><code>const now = deps.now ?? Date.now;
+const emit = (e: WorkerEvent) =&gt; onEvent({ ...e, ts: now() });
+
+const done = (async () =&gt; {
+  const stderrDone = drainStderr(proc.stderr, emit);
+  try {
+    for await (const event of adapter.parseEvents(proc.stdout)) {
+      emit(event);
+    }
+    const exit = await proc.exit;
+    if (exit.error) {
+      emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
+    } else if (exit.code !== null &amp;&amp; exit.code !== 0) {
+      emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
+    }
+  } catch (err) {
+    emit({ type: "error", message: errString(err), transport: isTransport(err) });
+  } finally {
+    await stderrDone;
+  }
+})();
+
+return { cancel: () =&gt; proc.kill(), done };</code></pre>
+<p>Add the drain helper at the bottom of the file:</p>
+<pre class="lang-ts"><code>async function drainStderr(
+  stderr: AsyncIterable&lt;Buffer&gt; | undefined,
+  emit: (e: WorkerEvent) =&gt; void,
+): Promise&lt;void&gt; {
+  if (!stderr) {
+    return;
+  }
+  let buffer = "";
+  for await (const chunk of stderr) {
+    buffer += chunk.toString("utf8");
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) &gt;= 0) {
+      emitStderrLine(buffer.slice(0, nl), emit);
+      buffer = buffer.slice(nl + 1);
+    }
+  }
+  emitStderrLine(buffer, emit);
+}
+
+function emitStderrLine(line: string, emit: (e: WorkerEvent) =&gt; void): void {
+  const text = line.trim();
+  // ponytail: this notice is benign (stdin is /dev/null) and just noise — drop it.
+  if (!text || text.startsWith("Reading additional input from stdin")) {
+    return;
+  }
+  emit({ type: "log", level: "error", text });
+}</code></pre>
+<p>In <code>defaultSpawn</code>, expose stderr (replace the <code>ponytail: stderr is ignored</code> comment and the return):</p>
+<pre class="lang-ts"><code>return {
+  stdout: child.stdout!,
+  stderr: child.stderr ?? undefined,
+  kill: () =&gt; {
+    child.kill();
+  },
+  exit,
+};</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Run the tests to verify they pass</strong></span></div>
+<p>Run: <code>npm test</code> Expected: PASS — all runner tests (updated + new).</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/runner.ts src/worker/runner.test.ts
+git commit -m "feat(worker): runner stamps event ts and surfaces child stderr"</code></pre>
+<hr>
+<h3>Task 4: Webview — event-typed timeline</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/webview/views/worker.tsx</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: the grown <code>WorkerEvent</code> (with <code>ts</code>).</li><li>Produces: a timeline rendered from <code>WorkerEvent[]</code> state (replacing the flat <code>string[]</code>), with type-specific rows: reasoning (muted), tool-call (<code>▶ shell: &lt;cmd&gt;</code>), tool-result (<code>✓/✗ exit N</code> + output), file-change (<code>✎ &lt;kind&gt; &lt;path&gt;</code>), usage footer, errors, agent message.</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Switch state from formatted strings to events</strong></span></div>
+<p>In <code>src/webview/views/worker.tsx</code>, replace the <code>lines</code> state and its <code>setLines</code> usages:</p>
+<pre class="lang-tsx"><code>const [events, setEvents] = useState&lt;WorkerEvent[]&gt;([]);</code></pre>
+<p>In the <code>onMessage</code> effect, push the raw event:</p>
+<pre class="lang-tsx"><code>if (msg.type === "taskEvent" &amp;&amp; msg.workerId === WORKER_ID) {
+  setEvents((prev) =&gt; [...prev, msg.event]);
+  if (msg.event.type === "done" || msg.event.type === "error") {
+    setRunning(false);
+  }
+}</code></pre>
+<p>In <code>run()</code>, reset with <code>setEvents([]);</code> instead of <code>setLines([]);</code>.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Replace the output pane with a timeline renderer</strong></span></div>
+<p>Replace the <code>&lt;ScrollArea&gt;</code> output block and the <code>formatEvent</code> function with a typed renderer. Output pane:</p>
+<pre class="lang-tsx"><code>&lt;ScrollArea className="h-72 rounded-md border bg-card p-3"&gt;
+  {events.length ? (
+    &lt;div className="flex flex-col gap-1 text-xs"&gt;
+      {events.map((e, i) =&gt; (
+        &lt;EventRow key={i} event={e} /&gt;
+      ))}
+    &lt;/div&gt;
+  ) : (
+    &lt;p className="text-xs text-muted-foreground"&gt;Output will stream here.&lt;/p&gt;
+  )}
+&lt;/ScrollArea&gt;</code></pre>
+<p>Add the <code>EventRow</code> component (replaces <code>formatEvent</code>):</p>
+<pre class="lang-tsx"><code>function EventRow({ event: e }: { event: WorkerEvent }) {
+  switch (e.type) {
+    case "started":
+      return &lt;div className="text-muted-foreground"&gt;● started&lt;/div&gt;;
+    case "reasoning":
+      return &lt;div className="text-muted-foreground italic whitespace-pre-wrap"&gt;{e.text}&lt;/div&gt;;
+    case "agent-message":
+      return &lt;div className="whitespace-pre-wrap"&gt;{e.text}&lt;/div&gt;;
+    case "tool-call":
+      return &lt;div className="font-mono"&gt;▶ {e.name}{e.detail ? `: ${e.detail}` : ""}&lt;/div&gt;;
+    case "tool-result":
+      return (
+        &lt;div className="font-mono"&gt;
+          &lt;span className={e.ok ? "text-green-500" : "text-red-500"}&gt;{e.ok ? "✓" : "✗"}&lt;/span&gt;{" "}
+          exit {e.exitCode ?? "?"}
+          {e.output ? &lt;pre className="whitespace-pre-wrap opacity-80"&gt;{e.output}&lt;/pre&gt; : null}
+        &lt;/div&gt;
+      );
+    case "file-change":
+      return &lt;div className="font-mono"&gt;✎ {e.kind} {e.path}&lt;/div&gt;;
+    case "usage":
+      return (
+        &lt;div className="text-muted-foreground"&gt;
+          tokens — in {e.inputTokens ?? 0} (cached {e.cachedInputTokens ?? 0}) · out {e.outputTokens ?? 0}
+        &lt;/div&gt;
+      );
+    case "log":
+      return &lt;div className={e.level === "error" ? "text-red-500" : "text-muted-foreground"}&gt;{e.text}&lt;/div&gt;;
+    case "decision-request":
+      return &lt;div&gt;question: {e.questions.map((q) =&gt; q.question).join(" | ")}&lt;/div&gt;;
+    case "done":
+      return &lt;div className="text-green-500"&gt;● done&lt;/div&gt;;
+    case "error":
+      return &lt;div className="text-red-500"&gt;error: {e.message}&lt;/div&gt;;
+  }
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Type-check, lint, and build</strong></span></div>
+<p>Run: <code>npm run check-types &amp;&amp; npm run lint &amp;&amp; node esbuild.js</code> Expected: no errors. (The <code>switch</code> is exhaustive over <code>WorkerEvent["type"]</code>; if a case is missing, <code>check-types</code> flags it.)</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Manual smoke test</strong></span></div>
+<p>Launch the extension (F5 / Run Extension), open the Worker view, set a <code>workspace-write</code> working dir, and run: *"Briefly reason, then run <code>ls</code> and create a file note.txt with hi."* Confirm the timeline shows: started → reasoning (muted) → <code>▶ shell: ls</code> → <code>✓ exit 0</code> → <code>✎ add note.txt</code> → token footer → done.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/webview/views/worker.tsx
+git commit -m "feat(webview): event-typed Worker timeline"</code></pre>
+<hr>
+<h2>US-2: Verification gate — no "done" without proof</h2>
+<p><strong>What it does:</strong> You give the Worker a list of shell checks (e.g. <code>npm test</code>, <code>npm run lint</code>). After the agent says it's finished, the runner runs each check itself in the working dir and reports whether they passed — the final result is marked *verified* only if every check passes. The agent's own word is never trusted.</p>
+<p><strong>Why it's a vertical slice:</strong> It adds the <code>verification</code> harness field (data), the post-<code>done</code> execution + <code>verified</code> flag (logic), and the verify-command inputs + pass/fail badges (UI). Runnable on its own: add a check that fails, watch the run come back <strong>not verified</strong>.</p>
+<hr>
+<h3>Task 5: <code>Harness.verification</code> + runner post-<code>done</code> verification gate</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/worker/types.ts</code></li><li>Modify: <code>src/worker/runner.ts</code></li><li>Test: <code>src/worker/runner.test.ts</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: the runner's <code>emit</code> + terminal <code>done</code> from Task 3.</li><li>Produces: <code>Harness.verification?: { command: string; label?: string }[]</code>; <code>RunDeps.verifyFn?: (command: string, cwd: string) =&gt; Promise&lt;{ ok: boolean; output?: string }&gt;</code> (default runs the command via <code>child_process.exec</code>). After a clean <code>done</code>, the runner runs each check in <code>harness.workingDir</code>, emits a <code>verification</code> event per check, and emits <code>done</code> with <code>verified</code> = (all checks passed). With no checks configured, <code>done</code> carries <strong>no</strong> <code>verified</code> key (unchanged Epic 1 shape).</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Write the failing tests</strong></span></div>
+<p>Add to <code>src/worker/runner.test.ts</code>:</p>
+<pre class="lang-ts"><code>test("runs verification checks after done and sets verified", async () =&gt; {
+  const events: WorkerEvent[] = [];
+  const ran: { command: string; cwd: string }[] = [];
+  const w = worker();
+  w.harness.verification = [{ command: "npm test" }, { command: "npm run lint" }];
+  const { proc } = fakeProcess(
+    ['{"type":"item.completed","item":{"type":"agent_message","text":"all set"}}\n', '{"type":"turn.completed","usage":{}}\n'],
+    { code: 0 },
+  );
+  const handle = runWorker(w, "t", (e) =&gt; events.push(e), {
+    spawnFn: () =&gt; proc,
+    now: () =&gt; NOW,
+    verifyFn: async (command, cwd) =&gt; {
+      ran.push({ command, cwd });
+      return { ok: command === "npm test", output: command + " output" };
+    },
+  });
+  await handle.done;
+  assert.deepStrictEqual(ran, [
+    { command: "npm test", cwd: w.harness.workingDir },
+    { command: "npm run lint", cwd: w.harness.workingDir },
+  ]);
+  const verifications = events.filter((e) =&gt; e.type === "verification");
+  assert.deepStrictEqual(
+    verifications.map((e) =&gt; (e as { command: string; ok: boolean }).ok),
+    [true, false],
+  );
+  const doneEvent = events.find((e) =&gt; e.type === "done") as { verified?: boolean };
+  assert.strictEqual(doneEvent.verified, false);
+});
+
+test("done carries no verified key when no checks are configured", async () =&gt; {
+  const events: WorkerEvent[] = [];
+  const { proc } = fakeProcess(['{"type":"turn.completed","usage":{}}\n'], { code: 0 });
+  const handle = runWorker(worker(), "t", (e) =&gt; events.push(e), { spawnFn: () =&gt; proc, now: () =&gt; NOW });
+  await handle.done;
+  assert.deepStrictEqual(events, [{ type: "done", lastMessage: undefined, ts: NOW }]);
+});</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Run the tests to verify they fail</strong></span></div>
+<p>Run: <code>npm test</code> Expected: FAIL — <code>verifyFn</code> is not a known dep; no <code>verification</code> events; <code>done</code> has no <code>verified</code>.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Add the <code>verification</code> field to <code>Harness</code></strong></span></div>
+<p>In <code>src/worker/types.ts</code>, grow <code>Harness</code>:</p>
+<pre class="lang-ts"><code>export interface Harness {
+  sandbox: SandboxMode;
+  workingDir: string;
+  verification?: { command: string; label?: string }[]; // independent checks run AFTER the agent's done (Epic 2)
+  // ponytail: writableRoots/maxSteps/timeoutMs added in US-3 of this epic.
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Add the verification gate to the runner</strong></span></div>
+<p>In <code>src/worker/runner.ts</code>, add <code>verifyFn</code> to <code>RunDeps</code> and a <code>VerifyFn</code> type:</p>
+<pre class="lang-ts"><code>export type VerifyFn = (command: string, cwd: string) =&gt; Promise&lt;{ ok: boolean; output?: string }&gt;;
+
+export interface RunDeps {
+  spawnFn?: SpawnFn;
+  adapter?: AgentAdapter;
+  credentials?: Credentials;
+  now?: () =&gt; number;
+  verifyFn?: VerifyFn;
+}</code></pre>
+<p>The runner must withhold the parser's <code>done</code>, run the checks, then emit the final <code>done</code>. Update the <code>done</code> IIFE: hold a <code>pendingDone</code>, forward all other events, and after the exit checks pass, run verification. Replace the streaming loop + exit handling:</p>
+<pre class="lang-ts"><code>const verifyFn = deps.verifyFn ?? defaultVerify;
+let pendingDone: Extract&lt;WorkerEvent, { type: "done" }&gt; | null = null;
+
+const stderrDone = drainStderr(proc.stderr, emit);
+try {
+  for await (const event of adapter.parseEvents(proc.stdout)) {
+    if (event.type === "done") {
+      pendingDone = event;
+      continue;
+    }
+    emit(event);
+  }
+  const exit = await proc.exit;
+  if (exit.error) {
+    emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
+  } else if (exit.code !== null &amp;&amp; exit.code !== 0) {
+    emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
+  } else if (pendingDone) {
+    const checks = worker.harness.verification ?? [];
+    if (checks.length === 0) {
+      emit(pendingDone);
+    } else {
+      let verified = true;
+      for (const check of checks) {
+        const r = await verifyFn(check.command, worker.harness.workingDir);
+        emit({ type: "verification", command: check.command, ok: r.ok, output: r.output });
+        if (!r.ok) {
+          verified = false;
+        }
+      }
+      emit({ ...pendingDone, verified });
+    }
+  }
+} catch (err) {
+  emit({ type: "error", message: errString(err), transport: isTransport(err) });
+} finally {
+  await stderrDone;
+}</code></pre>
+<blockquote>Note: this also fixes an Epic 1 quirk — a non-zero exit now yields *only* an <code>error</code> (the <code>done</code> is withheld), instead of both <code>done</code> and <code>error</code>.</blockquote>
+<p>Add the default verifier and the <code>exec</code> import at the top:</p>
+<pre class="lang-ts"><code>import { spawn, exec } from "child_process";</code></pre>
+<pre class="lang-ts"><code>const VERIFY_TIMEOUT_MS = 120_000;
+
+function defaultVerify(command: string, cwd: string): Promise&lt;{ ok: boolean; output?: string }&gt; {
+  return new Promise((resolve) =&gt; {
+    exec(command, { cwd, timeout: VERIFY_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) =&gt; {
+      const output = `${stdout}${stderr}`.trim();
+      resolve({ ok: !err, output: output || undefined });
+    });
+  });
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Run the tests to verify they pass</strong></span></div>
+<p>Run: <code>npm test</code> Expected: PASS — verification cases pass; the no-checks <code>done</code> shape is unchanged.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 6: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/types.ts src/worker/runner.ts src/worker/runner.test.ts
+git commit -m "feat(worker): post-done verification gate (verify[] -&gt; verified)"</code></pre>
+<hr>
+<h3>Task 6: Webview — verification inputs + badges</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/webview/views/worker.tsx</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>Harness.verification</code>, the <code>verification</code> event, and <code>done.verified</code>.</li><li>Produces: an editable list of verify commands wired into <code>worker.harness.verification</code>, plus rendering of <code>verification</code> events (✓/✗ per command) and a verified summary on <code>done</code>.</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Add verify-command state and inputs</strong></span></div>
+<p>In <code>worker.tsx</code>, add state:</p>
+<pre class="lang-tsx"><code>const [verifyCommands, setVerifyCommands] = useState&lt;string[]&gt;([]);</code></pre>
+<p>Add an inputs block (after the Task textarea, before the Run/Cancel row):</p>
+<pre class="lang-tsx"><code>&lt;div className="flex flex-col gap-1.5"&gt;
+  &lt;Label&gt;Verification checks (run after the agent finishes)&lt;/Label&gt;
+  {verifyCommands.map((cmd, i) =&gt; (
+    &lt;div key={i} className="flex gap-2"&gt;
+      &lt;Input
+        value={cmd}
+        onChange={(e) =&gt;
+          setVerifyCommands((prev) =&gt; prev.map((c, j) =&gt; (j === i ? e.target.value : c)))
+        }
+        placeholder="npm test"
+      /&gt;
+      &lt;Button variant="outline" onClick={() =&gt; setVerifyCommands((prev) =&gt; prev.filter((_, j) =&gt; j !== i))}&gt;
+        Remove
+      &lt;/Button&gt;
+    &lt;/div&gt;
+  ))}
+  &lt;Button variant="outline" onClick={() =&gt; setVerifyCommands((prev) =&gt; [...prev, ""])}&gt;
+    Add check
+  &lt;/Button&gt;
+&lt;/div&gt;</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Wire the checks into the run payload</strong></span></div>
+<p>In <code>run()</code>, set <code>harness.verification</code> from the non-empty commands:</p>
+<pre class="lang-tsx"><code>harness: {
+  sandbox,
+  workingDir: workingDir.trim(),
+  verification: verifyCommands.map((c) =&gt; c.trim()).filter(Boolean).map((command) =&gt; ({ command })),
+},</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Render verification events + verified summary</strong></span></div>
+<p>In <code>EventRow</code>, the <code>verification</code> case is already covered if you added it; ensure it renders:</p>
+<pre class="lang-tsx"><code>case "verification":
+  return (
+    &lt;div className="font-mono"&gt;
+      &lt;span className={e.ok ? "text-green-500" : "text-red-500"}&gt;{e.ok ? "✓" : "✗"}&lt;/span&gt; verify: {e.command}
+      {e.output ? &lt;pre className="whitespace-pre-wrap opacity-80"&gt;{e.output}&lt;/pre&gt; : null}
+    &lt;/div&gt;
+  );</code></pre>
+<p>And update the <code>done</code> case to show the verified verdict:</p>
+<pre class="lang-tsx"><code>case "done":
+  return (
+    &lt;div className={e.verified === false ? "text-red-500" : "text-green-500"}&gt;
+      ● done{e.verified === undefined ? "" : e.verified ? " — verified ✓" : " — NOT verified ✗"}
+    &lt;/div&gt;
+  );</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Type-check, lint, build</strong></span></div>
+<p>Run: <code>npm run check-types &amp;&amp; npm run lint &amp;&amp; node esbuild.js</code> Expected: no errors.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Manual smoke test</strong></span></div>
+<p>Run a trivial task with two checks: one that passes (<code>true</code>) and one that fails (<code>false</code>). Confirm the timeline shows <code>✓ verify: true</code>, <code>✗ verify: false</code>, and <code>● done — NOT verified ✗</code>.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 6: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/webview/views/worker.tsx
+git commit -m "feat(webview): verification command inputs and verified badges"</code></pre>
+<hr>
+<h2>US-3: Guardrails — cap what it can spend and touch</h2>
+<p><strong>What it does:</strong> You can cap how many tool calls and how long a run may go; the runner kills the process and tells you *why* when a cap is breached. You also control the sandbox mode and any extra writable directories the agent is allowed to touch.</p>
+<p><strong>Why it's a vertical slice:</strong> It adds the cap + writable-root harness fields (data), the runner circuit breaker + the <code>--add-dir</code> argv mapping (logic), and the cap/dir inputs (UI). Runnable on its own: set <code>maxSteps: 1</code>, watch a multi-command task get killed with "step cap (1) exceeded".</p>
+<hr>
+<h3>Task 7: <code>Harness.maxSteps</code>/<code>timeoutMs</code> + runner circuit breaker</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/worker/types.ts</code></li><li>Modify: <code>src/worker/runner.ts</code></li><li>Test: <code>src/worker/runner.test.ts</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: the runner loop + <code>tool-call</code> events.</li><li>Produces: <code>Harness.maxSteps?: number</code> and <code>Harness.timeoutMs?: number</code>. The runner counts <code>tool-call</code> events; exceeding <code>maxSteps</code> triggers <code>proc.kill()</code> and an <code>error</code> <code>"step cap (N) exceeded"</code>. A <code>timeoutMs</code> wall-clock timer triggers <code>proc.kill()</code> and an <code>error</code> <code>"timeout (Nms) exceeded"</code>. When a cap fires, no <code>done</code>/verification runs.</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Write the failing tests</strong></span></div>
+<p><code>fakeProcess</code> from Task 3 returns a static stdout stream, so <code>kill()</code> doesn't stop it — that's fine: the breaker's job is to *emit the error and stop forwarding*. Add to <code>src/worker/runner.test.ts</code>:</p>
+<pre class="lang-ts"><code>test("kills and errors when the step cap is exceeded", async () =&gt; {
+  const events: WorkerEvent[] = [];
+  const w = worker();
+  w.harness.maxSteps = 1;
+  const { proc, wasKilled } = fakeProcess(
+    [
+      '{"type":"item.started","item":{"id":"a","type":"command_execution","command":"echo 1"}}\n',
+      '{"type":"item.started","item":{"id":"b","type":"command_execution","command":"echo 2"}}\n',
+      '{"type":"turn.completed","usage":{}}\n',
+    ],
+    { code: null },
+  );
+  const handle = runWorker(w, "t", (e) =&gt; events.push(e), { spawnFn: () =&gt; proc, now: () =&gt; NOW });
+  await handle.done;
+  assert.strictEqual(wasKilled(), true);
+  const err = events.find((e) =&gt; e.type === "error") as { message: string } | undefined;
+  assert.strictEqual(err?.message, "step cap (1) exceeded");
+  assert.ok(!events.some((e) =&gt; e.type === "done"), "no done after a cap kill");
+});
+
+test("kills and errors when the wall-clock timeout fires", async () =&gt; {
+  const events: WorkerEvent[] = [];
+  const w = worker();
+  w.harness.timeoutMs = 5;
+  // a stdout that never ends until killed
+  async function* hang(): AsyncIterable&lt;Buffer&gt; {
+    await new Promise((r) =&gt; setTimeout(r, 1000));
+    yield Buffer.from('{"type":"turn.completed","usage":{}}\n');
+  }
+  let killed = false;
+  const proc: SpawnedProcess = {
+    stdout: hang(),
+    kill: () =&gt; {
+      killed = true;
+    },
+    exit: new Promise((resolve) =&gt; setTimeout(() =&gt; resolve({ code: null }), 20)),
+  };
+  const handle = runWorker(w, "t", (e) =&gt; events.push(e), { spawnFn: () =&gt; proc, now: () =&gt; NOW });
+  await handle.done;
+  assert.strictEqual(killed, true);
+  const err = events.find((e) =&gt; e.type === "error") as { message: string } | undefined;
+  assert.strictEqual(err?.message, "timeout (5ms) exceeded");
+});</code></pre>
+<blockquote>The timeout test needs the loop to actually stop on kill. Since the fake <code>kill()</code> only flips a flag, drive loop termination off <code>proc.exit</code>: race the parser loop against <code>exit</code>. The implementation below does that via an <code>aborted</code> flag the timer/cap set, checked each iteration, plus resolving when <code>exit</code> settles. For the hang test, <code>exit</code> resolves at 20ms (after the 5ms timer fires <code>kill</code>), ending the run.</blockquote>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Run the tests to verify they fail</strong></span></div>
+<p>Run: <code>npm test</code> Expected: FAIL — <code>maxSteps</code>/<code>timeoutMs</code> are not on <code>Harness</code>; no caps enforced.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Add the cap fields to <code>Harness</code></strong></span></div>
+<p>In <code>src/worker/types.ts</code>:</p>
+<pre class="lang-ts"><code>export interface Harness {
+  sandbox: SandboxMode;
+  workingDir: string;
+  writableRoots?: string[]; // extra --add-dir writable roots (Epic 2)
+  verification?: { command: string; label?: string }[];
+  maxSteps?: number; // circuit breaker: max tool-call events before kill (Epic 2)
+  timeoutMs?: number; // circuit breaker: wall-clock kill (Epic 2)
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Add the circuit breaker to the runner</strong></span></div>
+<p>In <code>runWorker</code>, before the stream loop, set up the abort flag, the timer, and a step counter. The loop checks <code>aborted</code> each iteration; the wall-clock timer and the step cap both set <code>aborted</code> + a <code>stopReason</code>, call <code>proc.kill()</code>, and the loop exits. Insert at the top of the <code>done</code> IIFE (before <code>stderrDone</code>):</p>
+<pre class="lang-ts"><code>const harness = worker.harness;
+let toolCalls = 0;
+let stopReason: "steps" | "timeout" | null = null;
+let timer: ReturnType&lt;typeof setTimeout&gt; | undefined;
+if (harness.timeoutMs &amp;&amp; harness.timeoutMs &gt; 0) {
+  timer = setTimeout(() =&gt; {
+    if (stopReason === null) {
+      stopReason = "timeout";
+      proc.kill();
+    }
+  }, harness.timeoutMs);
+}</code></pre>
+<p>In the stream loop, count tool calls and break on the cap; and stop early if a timeout already fired. Replace the <code>for await</code> body's head:</p>
+<pre class="lang-ts"><code>for await (const event of adapter.parseEvents(proc.stdout)) {
+  if (stopReason === "timeout") {
+    break;
+  }
+  if (event.type === "tool-call") {
+    toolCalls++;
+    if (harness.maxSteps &amp;&amp; toolCalls &gt; harness.maxSteps) {
+      stopReason = "steps";
+      emit(event);
+      proc.kill();
+      break;
+    }
+  }
+  if (event.type === "done") {
+    pendingDone = event;
+    continue;
+  }
+  emit(event);
+}</code></pre>
+<p>After the loop, handle the stop reasons *before* the exit/verification block (they take precedence), and clear the timer in <code>finally</code>:</p>
+<pre class="lang-ts"><code>await proc.exit;
+if (stopReason === "steps") {
+  emit({ type: "error", message: `step cap (${harness.maxSteps}) exceeded`, transport: false });
+} else if (stopReason === "timeout") {
+  emit({ type: "error", message: `timeout (${harness.timeoutMs}ms) exceeded`, transport: false });
+} else if (/* the existing exit.error / non-zero / pendingDone chain */) {
+  // unchanged from Task 5 — but read `exit` from the awaited value above
+}</code></pre>
+<p>To keep one <code>await proc.exit</code>, capture it: <code>const exit = await proc.exit;</code> then the chain uses <code>exit</code>. Add <code>if (timer) { clearTimeout(timer); }</code> in the <code>finally</code> block alongside <code>await stderrDone</code>.</p>
+<blockquote>ponytail: the breaker counts <code>tool-call</code> events and races the parser against <code>proc.exit</code> — good enough for the CLI bridge. A token-based mid-run budget isn't possible (Codex reports usage only at the end); that lands in Epic 5's HTTP loop where we own each request.</blockquote>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Run the tests to verify they pass</strong></span></div>
+<p>Run: <code>npm test</code> Expected: PASS — step-cap and timeout cases pass; all earlier runner tests still pass.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 6: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/types.ts src/worker/runner.ts src/worker/runner.test.ts
+git commit -m "feat(worker): runner circuit breaker — maxSteps and timeoutMs"</code></pre>
+<hr>
+<h3>Task 8: Webview + adapter — caps and writable-roots controls</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>src/worker/adapters/codex.ts</code></li><li>Test: <code>src/worker/adapters/codex.test.ts</code></li><li>Modify: <code>src/webview/views/worker.tsx</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>Harness.writableRoots</code>, <code>maxSteps</code>, <code>timeoutMs</code>.</li><li>Produces: <code>buildInvocation</code> appends <code>--add-dir &lt;root&gt;</code> for each <code>harness.writableRoots</code> entry; the webview exposes step/timeout/writable-dir inputs wired into the harness.</li></ul>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 1: Write the failing adapter test</strong></span></div>
+<p>Add to <code>src/worker/adapters/codex.test.ts</code> (in the <code>buildInvocation</code> suite). First extend the <code>sampleWorker</code> helper to allow harness overrides, or build inline:</p>
+<pre class="lang-ts"><code>test("appends --add-dir for each writable root", () =&gt; {
+  const w = sampleWorker();
+  w.harness.writableRoots = ["/extra/one", "/extra/two"];
+  const inv = codexAdapter.buildInvocation(w, "t", {});
+  const flags = inv.args.filter((_, i) =&gt; inv.args[i - 1] === "--add-dir");
+  assert.deepStrictEqual(flags, ["/extra/one", "/extra/two"]);
+});</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 2: Run the test to verify it fails</strong></span></div>
+<p>Run: <code>npm test</code> Expected: FAIL — no <code>--add-dir</code> in argv.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 3: Add <code>--add-dir</code> to <code>buildInvocation</code></strong></span></div>
+<p>In <code>src/worker/adapters/codex.ts</code>, after the base <code>args</code> array and before the <code>-m</code> block:</p>
+<pre class="lang-ts"><code>for (const root of harness.writableRoots ?? []) {
+  args.push("--add-dir", root);
+}</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 4: Run the test to verify it passes</strong></span></div>
+<p>Run: <code>npm test</code> Expected: PASS.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 5: Add caps + writable-dir inputs to the webview</strong></span></div>
+<p>In <code>worker.tsx</code>, add state:</p>
+<pre class="lang-tsx"><code>const [maxSteps, setMaxSteps] = useState("");
+const [timeoutSec, setTimeoutSec] = useState("");
+const [writableDirs, setWritableDirs] = useState("");</code></pre>
+<p>Add an inputs block (a 3-column grid near the sandbox controls):</p>
+<pre class="lang-tsx"><code>&lt;div className="grid grid-cols-3 gap-3"&gt;
+  &lt;div className="flex flex-col gap-1.5"&gt;
+    &lt;Label htmlFor="worker-maxsteps"&gt;Max steps&lt;/Label&gt;
+    &lt;Input id="worker-maxsteps" value={maxSteps} onChange={(e) =&gt; setMaxSteps(e.target.value)} placeholder="∞" /&gt;
+  &lt;/div&gt;
+  &lt;div className="flex flex-col gap-1.5"&gt;
+    &lt;Label htmlFor="worker-timeout"&gt;Timeout (s)&lt;/Label&gt;
+    &lt;Input id="worker-timeout" value={timeoutSec} onChange={(e) =&gt; setTimeoutSec(e.target.value)} placeholder="∞" /&gt;
+  &lt;/div&gt;
+  &lt;div className="flex flex-col gap-1.5"&gt;
+    &lt;Label htmlFor="worker-writable"&gt;Extra writable dirs (comma-sep)&lt;/Label&gt;
+    &lt;Input id="worker-writable" value={writableDirs} onChange={(e) =&gt; setWritableDirs(e.target.value)} placeholder="/path/a,/path/b" /&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 6: Wire the caps into the run payload</strong></span></div>
+<p>In <code>run()</code>, extend the <code>harness</code> object (parse numbers, drop blanks):</p>
+<pre class="lang-tsx"><code>harness: {
+  sandbox,
+  workingDir: workingDir.trim(),
+  verification: verifyCommands.map((c) =&gt; c.trim()).filter(Boolean).map((command) =&gt; ({ command })),
+  writableRoots: writableDirs.split(",").map((d) =&gt; d.trim()).filter(Boolean),
+  maxSteps: maxSteps.trim() ? Number(maxSteps) : undefined,
+  timeoutMs: timeoutSec.trim() ? Number(timeoutSec) * 1000 : undefined,
+},</code></pre>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 7: Type-check, lint, build</strong></span></div>
+<p>Run: <code>npm run check-types &amp;&amp; npm run lint &amp;&amp; node esbuild.js</code> Expected: no errors.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 8: Manual smoke test</strong></span></div>
+<p>Set Max steps = 1 and run a task that needs two commands (e.g. *"run <code>ls</code> then run <code>pwd</code>"*). Confirm the run is killed and the timeline shows <code>error: step cap (1) exceeded</code>. Then clear it, set Timeout = 3, run a long task, and confirm <code>error: timeout (3000ms) exceeded</code>.</p>
+<div class="task"><input type="checkbox" disabled > <span><strong>Step 9: Commit</strong></span></div>
+<pre class="lang-bash"><code>git add src/worker/adapters/codex.ts src/worker/adapters/codex.test.ts src/webview/views/worker.tsx
+git commit -m "feat(worker): writable-roots (--add-dir) and webview cap controls"</code></pre>
+<hr>
+<h2>Out of scope (correctly deferred)</h2>
+<ul><li><strong>Auto-repair / re-prompt on failed verification</strong> — Epic 2 makes <code>verified: false</code> visible; acting on it is the Orchestrator's loop (Epic 3+).</li><li><strong>Soul injection</strong> (Epic 3).</li><li><strong>Mid-run token budget</strong> — Codex reports usage only at <code>turn.completed</code>; a real token cap belongs to Epic 5's HTTP loop where we own each request. Epic 2 surfaces final usage only.</li><li><strong>Approval-as-code</strong> — stays Codex execpolicy <code>.rules</code> config + <code>--ask-for-approval never</code>, not runtime code (deny-lists are the durable headless guarantee).</li><li><strong><code>mcp_tool_call</code> / <code>web_search</code> rich mapping</strong> — left as the <code>log</code> fallback until a fixture proves their real shapes (Epic 4 touches MCP).</li><li><strong>Multi-account / tier fallback</strong> (Epic 6).</li></ul>
+<h2>Self-Review</h2>
+<ul><li><strong>Spec §5 coverage:</strong> Observability (§5 row) → US-1; Verification (§5 row + §11 discipline) → US-2; Guardrails (§5 row: sandbox, <code>--add-dir</code>, caps) → US-3. Agent loop / tool dispatch / memory stay the CLI's (configured, not built) — correct for the CLI protocol.</li><li><strong>Spec §12 Epic 2 deliverable</strong> ("shows what it's doing + refuses to claim done without passing checks") → US-1 timeline + US-2 verified gate. ✓</li><li><strong>CLI-agnostic contract:</strong> all <code>WorkerEvent</code>/<code>Harness</code> additions are in the node-free type files; only <code>codex.ts</code> is Codex-specific. ✓</li><li><strong>Type consistency:</strong> <code>verifyFn</code>/<code>VerifyFn</code>, <code>pendingDone</code>, <code>stopReason</code>, <code>Harness.{verification,writableRoots,maxSteps,timeoutMs}</code>, <code>WorkerEvent</code> members are used with identical names/shapes across Tasks 2–8. The runner's <code>emit</code>/<code>ts</code> choke point (Task 3) is reused by Tasks 5 and 7.</li><li><strong>No placeholders:</strong> every code step shows real code; every test shows real assertions; the one prose-described block (Task 7 Step 4 exit chain) explicitly says "unchanged from Task 5" and shows how to thread the awaited <code>exit</code>.</li></ul>
+<pre class="lang-"><code></code></pre>
+</div></body>
+</html>

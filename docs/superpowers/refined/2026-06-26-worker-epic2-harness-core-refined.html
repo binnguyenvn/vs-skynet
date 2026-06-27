@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worker — Epic 2: Harness Core — Refined User Stories</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--line:#30363d;--tx:#e6edf3;--mut:#9aa7b4;
+    --acc:#58a6ff;--grn:#3fb950;--yel:#d29922;--red:#f85149;--pur:#bc8cff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1020px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:42px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16.5px;margin:30px 0 8px;color:var(--acc)}
+  h4{font-size:14px;margin:18px 0 6px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  p{color:var(--tx)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.85em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+    overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.5}
+  pre code{background:none;padding:0;color:#c9d6e3}
+  blockquote{border-left:3px solid var(--yel);background:var(--panel2);margin:14px 0;
+    padding:10px 16px;border-radius:0 8px 8px 0;color:var(--mut);font-size:14px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td code,th code{color:#c9d6e3}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  hr{border:0;border-top:1px solid var(--line);margin:26px 0}
+  .task{display:flex;gap:9px;align-items:flex-start;margin:5px 0;padding:5px 10px;
+    background:var(--panel);border:1px solid var(--line);border-radius:7px}
+  .task input{margin-top:3px}
+  strong{color:var(--tx)}
+</style>
+</head>
+<body><div class="wrap">
+<h1>Worker — Epic 2: Harness Core — Refined User Stories</h1>
+<blockquote>Plain-language view of the <a href="../plans/2026-06-26-worker-epic2-harness-core.md">Epic 2 plan</a>. Each User Story is one complete vertical slice — a feature that works end-to-end (data + logic + UI), not a technical layer. Audited: no layer-splits, no feature-mixes.</blockquote>
+<p><strong>The epic in one line:</strong> turn Epic 1's raw Codex bridge into a *reliable* Worker — one that shows what it's doing, refuses to claim "done" without proof, and can be capped in what it spends and touches.</p>
+<hr>
+<h2>US-1: Observability — the timeline shows the real run</h2>
+<p><strong>What it does:</strong> When you run a task, the Worker shows you *everything* Codex actually did — its reasoning, each command with its exit code and output, every file it changed, how many tokens it used, and any errors it printed — instead of Epic 1's bland one-line log. It's rendered as a readable, typed timeline in the panel.</p>
+<p><strong>Scope:</strong></p>
+<ul><li>In: new event types (<code>reasoning</code>, <code>tool-result</code>, <code>file-change</code>, <code>usage</code>) on the CLI-agnostic <code>WorkerEvent</code> contract; richer Codex <code>parseEvents</code> mapping (pairing each command with its result by id); a real captured Codex fixture as ground truth; capturing the child process's stderr; a per-event timestamp; the event-typed webview timeline.</li><li>Out: <code>mcp_tool_call</code> / <code>web_search</code> rich shapes (stay a generic log until a fixture proves them — Epic 4 touches MCP); any acting on what's observed.</li></ul>
+<p><strong>Acceptance:</strong> Run a task that reasons, runs a command, and edits a file → the timeline shows started → reasoning (muted) → <code>▶ shell: &lt;cmd&gt;</code> → <code>✓/✗ exit N</code> (+output) → <code>✎ &lt;kind&gt; &lt;path&gt;</code> → token footer → done. stderr diagnostics appear as red error lines (the benign stdin notice is filtered).</p>
+<p><strong>Tasks:</strong></p>
+<ul><li>Task 1 — Capture richer Codex ground-truth fixture</li><li>Task 2 — Expand <code>WorkerEvent</code> + Codex <code>parseEvents</code> (reasoning, tool-result, file-change, usage)</li><li>Task 3 — Runner: stamp <code>ts</code>, capture child stderr → log events</li><li>Task 4 — Webview: event-typed timeline</li></ul>
+<hr>
+<h2>US-2: Verification gate — no "done" without proof</h2>
+<p><strong>What it does:</strong> You give the Worker a list of shell checks (e.g. <code>npm test</code>, <code>npm run lint</code>). After the agent says it's finished, the runner runs each check *itself* in the working directory and marks the run <strong>verified</strong> only if every check passes. The agent's own claim of "done" is never trusted — the research says agents are wrong about being done ~40% of the time.</p>
+<p><strong>Scope:</strong></p>
+<ul><li>In: an optional <code>verification</code> list on the harness; the runner running those checks after the agent's <code>done</code> (via an injectable command runner); a <code>verification</code> event per check (pass/fail + output); a <code>verified</code> flag on the final <code>done</code>; webview inputs to add/remove checks and badges showing each result + the verdict.</li><li>Out: <strong>auto-repair / re-prompting</strong> on a failed check (that's the Orchestrator's loop, Epic 3+); the agent authoring its own assertions (checks are independent, held-out).</li></ul>
+<p><strong>Acceptance:</strong> Add two checks, one passing and one failing → the timeline shows <code>✓ verify: &lt;pass&gt;</code>, <code>✗ verify: &lt;fail&gt;</code>, and <code>● done — NOT verified ✗</code>. With no checks configured, <code>done</code> looks exactly as in Epic 1 (no <code>verified</code> shown).</p>
+<p><strong>Tasks:</strong></p>
+<ul><li>Task 5 — <code>Harness.verification</code> + runner post-<code>done</code> verification gate</li><li>Task 6 — Webview: verification command inputs + badges</li></ul>
+<hr>
+<h2>US-3: Guardrails — cap what it can spend and touch</h2>
+<p><strong>What it does:</strong> You can cap how many tool calls a run may make and how long it may run; when a cap is breached the runner kills the process and tells you *why*. You also control the sandbox mode and any extra directories the agent is allowed to write to.</p>
+<p><strong>Scope:</strong></p>
+<ul><li>In: <code>maxSteps</code> and <code>timeoutMs</code> caps on the harness; the runner as a circuit breaker (count tool-calls / wall-clock → <code>kill()</code> + an <code>error</code> naming the cap); <code>writableRoots</code> mapped to Codex <code>--add-dir</code>; webview inputs for steps/timeout/writable-dirs (sandbox picker already exists from Epic 1).</li><li>Out: a <strong>mid-run token budget</strong> — Codex only reports usage at the very end, so a token cap isn't enforceable from the stream; deferred to Epic 5's HTTP loop. Approval-as-code stays Codex execpolicy config, not runtime code.</li></ul>
+<p><strong>Acceptance:</strong> Set Max steps = 1 and run a two-command task → it's killed with <code>error: step cap (1) exceeded</code> and no <code>done</code>. Set Timeout = 3 on a long task → <code>error: timeout (3000ms) exceeded</code>. A writable root passed in appears as <code>--add-dir &lt;root&gt;</code> in the Codex argv.</p>
+<p><strong>Tasks:</strong></p>
+<ul><li>Task 7 — <code>Harness.maxSteps</code>/<code>timeoutMs</code> + runner circuit breaker</li><li>Task 8 — Webview + adapter: writable-roots (<code>--add-dir</code>) and cap controls</li></ul>
+<hr>
+<h2>Why these three and not more/fewer</h2>
+<p>The three User Stories map exactly onto the three harness facets the spec (§5) and the research call out — <strong>Observability, Verification, Guardrails</strong> — and onto Epic 2's stated deliverable (§12): "shows what it's doing + refuses to claim done without passing checks." Each ships standalone, end-to-end, behind the same CLI-agnostic contract that Epic 4's other CLIs and Epic 5's HTTP loop reuse unchanged. They're ordered by dependency: Observability grows the event vocabulary the other two emit into; Verification and Guardrails are independent of each other and could ship in either order.</p>
+</div></body>
+</html>

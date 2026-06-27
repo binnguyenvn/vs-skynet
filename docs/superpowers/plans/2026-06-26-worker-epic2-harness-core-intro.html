@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Epic 2 — Harness Core (the body that makes a Worker reliable)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1040px;margin:0 auto;padding:40px 24px 90px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:46px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:0 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono);font-size:.86em}
+  code{background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 8px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
+    background:var(--panel);color:var(--mut)}
+
+  .eq{font-family:var(--mono);font-size:18px;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:16px 18px;margin:18px 0;text-align:center;letter-spacing:.02em}
+  .eq b{color:var(--acc)} .eq .h{color:var(--grn)} .eq .s{color:var(--pur)}
+  .eq .map{display:block;font-size:12px;color:var(--mut);margin-top:8px;letter-spacing:0}
+
+  .cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin:14px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .card .k{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut)}
+  .card .t{font-weight:600;margin:4px 0 6px}
+
+  .stat-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .stat .big{font-family:var(--mono);font-size:20px;font-weight:700}
+  .stat .big .from{color:var(--mut)} .stat .big .arr{color:var(--acc);padding:0 6px}
+  .stat .big .to{color:var(--grn)}
+  .stat .cap{color:var(--mut);font-size:13px;margin-top:5px}
+  .stat .src{font-size:11px;margin-top:6px}
+  .stat.bad .big .to{color:var(--red)}
+
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td .mono{color:#c9d6e3}
+  .new{color:var(--grn)} .mod{color:var(--yel)} .drop{color:var(--red)}
+
+  .facet{border:1px solid var(--line);border-radius:14px;margin:16px 0;overflow:hidden}
+  .facet>.fhd{display:flex;align-items:center;gap:14px;padding:15px 18px;background:var(--panel2)}
+  .facet .ftag{font-family:var(--mono);font-weight:700;font-size:12.5px;padding:5px 10px;border-radius:7px;white-space:nowrap;color:#04130a}
+  .facet .ftitle{font-weight:700;font-size:16.5px;flex:1}
+  .facet .fwhat{font-size:11px;font-family:var(--mono);color:var(--mut);border:1px solid var(--line);
+    border-radius:999px;padding:3px 9px;white-space:nowrap}
+  .facet>.fbd{padding:14px 18px 18px}
+  .facet.obs .ftag{background:var(--acc)} .facet.obs{border-color:rgba(88,166,255,.4)}
+  .facet.ver .ftag{background:var(--grn)} .facet.ver{border-color:rgba(63,185,80,.4)}
+  .facet.grd .ftag{background:var(--yel);color:#1a1400} .facet.grd{border-color:rgba(210,153,34,.4)}
+  .why{font-size:14px;margin:0 0 10px}
+  .why b{color:var(--grn)}
+
+  pre.code{background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:#c9d6e3}
+  pre.code .c{color:var(--mut)} pre.code .k{color:var(--pur)} pre.code .s{color:#7ee787}
+  pre.code .n{color:var(--grn)} pre.code .t{color:var(--acc)}
+
+  .flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-family:var(--mono);
+    font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+  .flow .n{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+  .flow .ar{color:var(--acc)}
+  .flow .kill{border-color:rgba(248,81,73,.5);color:var(--red)}
+
+  .divider{display:flex;align-items:center;gap:12px;margin:30px 0 6px;color:var(--mut);
+    font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+  .divider::before,.divider::after{content:"";height:1px;background:var(--line);flex:1}
+
+  ol.steps{margin:10px 0;padding-left:20px} ol.steps li{margin:8px 0}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px;padding:2px 7px;margin:2px 3px 2px 0}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  .ask{background:linear-gradient(180deg,#16241b,#10160f);border:1px solid rgba(63,185,80,.35);
+    border-radius:12px;padding:18px 20px;margin:30px 0}
+  .ask h3{color:var(--grn)}
+  .srcs{font-size:12.5px;color:var(--mut)} .srcs li{margin:3px 0}
+  footer{margin-top:50px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:760px){.cards,.stat-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Epic 2 — Harness Core</h1>
+  <p class="sub">The <b>body</b> that turns the Codex bridge into a <i>reliable</i> Worker.
+     What an agent harness is, the evidence that it matters more than the model, and the concrete proposal to build it.</p>
+  <div class="tags">
+    <span class="tag">spec: docs/superpowers/specs/2026-06-26-worker-design.md §5, §12</span>
+    <span class="tag">builds on: Epic 1 (Codex bridge, merged)</span>
+    <span class="tag">codex-cli 0.142.2 — verified</span>
+    <span class="tag">2026-06-26</span>
+  </div>
+
+  <h2>What is an "agent harness"?</h2>
+  <p>A raw LLM is inert: text in, text out, no memory between calls, no loop. The <b>harness</b> is
+     everything-but-the-model that makes it actually <i>run</i> — the agent loop, tool dispatch, context
+     management, error recovery, and the control systems that keep it safe and honest. Epic 1 gave us the
+     thinnest possible harness: spawn Codex, stream its output, cancel. Epic 2 builds the part that makes the
+     Worker <b>dependable</b>.</p>
+
+  <div class="eq"><b>Worker</b> = <b>Agent</b> + <span class="h">Harness</span> + <span class="s">Soul</span>
+    <span class="map">Epic 1 proved the <b style="color:var(--acc)">Agent</b> ·
+      <b style="color:var(--grn)">Epic 2 builds the Harness</b> ·
+      Epic 3 proves the <b style="color:var(--pur)">Soul</b></span></div>
+
+  <h2>Why this isn't a small epic — the harness <em>is</em> the product</h2>
+  <p>The extension's whole bet is "a decent model with a great harness beats a great model with a bad one."
+     That isn't a slogan — it's measured. Swapping <i>only</i> the wrapper, model held fixed, moves agents by
+     double-digit points:</p>
+
+  <div class="stat-row">
+    <div class="stat">
+      <div class="big"><span class="from">3.79%</span><span class="arr">→</span><span class="to">12.47%</span></div>
+      <div class="cap">SWE-bench: same tasks, scaffold change only (RAG baseline → SWE-agent). ~3.3×.</div>
+      <div class="src"><a href="https://arxiv.org/pdf/2405.15793">SWE-agent, NeurIPS 2024</a></div>
+    </div>
+    <div class="stat">
+      <div class="big"><span class="from">52.8%</span><span class="arr">→</span><span class="to">66.5%</span></div>
+      <div class="cap">Terminal-Bench 2.0: harness engineering only, model fixed (gpt-5.2-codex). Outside Top 30 → Top 5.</div>
+      <div class="src"><a href="https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering">LangChain, 2026</a></div>
+    </div>
+    <div class="stat">
+      <div class="big"><span class="from">80%</span><span class="arr">→</span><span class="to">100%</span></div>
+      <div class="cap">Vercel pruned 15 tools → 2: success up, worst-case latency 724s → 141s, tokens −37%.</div>
+      <div class="src"><a href="https://vercel.com/blog/we-removed-80-percent-of-our-agents-tools">Vercel, 2026</a></div>
+    </div>
+    <div class="stat bad">
+      <div class="big"><span class="from">"45/45 ✓"</span><span class="arr">→</span><span class="to">26 real</span></div>
+      <div class="cap">42% false-positive "done": agents report all-pass; hidden tests disagree. Same failures across models — it's the loop, not the model.</div>
+      <div class="src"><a href="https://docs.bswen.com/blog/2026-06-25-ai-coding-agent-false-positive-failure/">bswen, 2026</a></div>
+    </div>
+  </div>
+
+  <p>That last number is the whole reason Epic 2 exists. An agent's word that it's "done" is wrong ~40% of the
+     time, and agents actively <b>game</b> visible signals — sealing internet + git history dropped one model from
+     87.1% to 73.0%, and 63% of its "fixes" were <i>retrieved</i> from existing PRs, not derived
+     (<a href="https://cursor.com/blog/reward-hacking-coding-benchmarks">Cursor, 2026</a>). A reliable Worker
+     cannot trust itself. The harness has to <b>see everything</b> it does, <b>verify</b> its output against
+     signals it can't fake, and <b>cap</b> what it's allowed to spend and touch. Those are the three facets below.</p>
+
+  <h2>The three facets of the harness (spec §5)</h2>
+  <p class="mut">Each is designed against Codex's <b>real</b> event shapes, but behind a <b>CLI-agnostic
+     contract</b> — so Epic 4 (Claude Code, Antigravity) reuses every line. The contract is the normalized
+     <code>WorkerEvent</code> stream + a harness-side runner wrapper; the adapter is the only CLI-specific part.</p>
+
+  <!-- OBSERVABILITY -->
+  <div class="facet obs">
+    <div class="fhd"><span class="ftag">FACET 1</span>
+      <span class="ftitle">Observability — show exactly what it's doing</span>
+      <span class="fwhat">the detective layer</span></div>
+    <div class="fbd">
+      <p class="why"><b>Why:</b> you can't verify or debug what you can't see. The field converges on a small
+        span taxonomy — OpenTelemetry GenAI defines <code>chat</code> / <code>execute_tool</code> /
+        <code>invoke_agent</code> spans with token-usage and tool-call/result attributes
+        (<a href="https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md">OTel GenAI</a>);
+        Datadog/OpenInference/Langfuse all expose LLM · tool · agent · retrieval · error event kinds.</p>
+      <p class="mut" style="margin:0 0 10px">Epic 1 deliberately drops most of Codex's stream — it surfaces
+        <code>started / agent-message / tool-call / done / error</code> and flattens everything else to a bland
+        <code>log</code>. Codex actually emits far more, and we throw it away:</p>
+      <table>
+        <tr><th>Codex item (verified)</th><th>Carries</th><th>Epic 1</th><th>Epic 2</th></tr>
+        <tr><td class="mono">command_execution</td><td><span class="mono">command, aggregated_output, exit_code, status</span></td><td class="drop">only the command, on start</td><td class="new">+ <span class="mono">tool-result</span> (exit_code, output, ok)</td></tr>
+        <tr><td class="mono">reasoning</td><td><span class="mono">text</span></td><td class="drop">dropped → "log: reasoning"</td><td class="new"><span class="mono">reasoning</span> event</td></tr>
+        <tr><td class="mono">file_change</td><td><span class="mono">changes[]{path, kind}</span></td><td class="drop">dropped</td><td class="new"><span class="mono">file-change</span> event</td></tr>
+        <tr><td class="mono">mcp_tool_call</td><td><span class="mono">server, tool, status</span></td><td class="drop">dropped</td><td class="new"><span class="mono">tool-call/result</span></td></tr>
+        <tr><td class="mono">web_search</td><td><span class="mono">query</span></td><td class="drop">dropped</td><td class="new"><span class="mono">tool-call</span></td></tr>
+        <tr><td class="mono">turn.completed</td><td><span class="mono">usage{input, cached, output, reasoning}</span></td><td class="drop">dropped</td><td class="new"><span class="mono">usage</span> event</td></tr>
+        <tr><td class="mono">(process stderr)</td><td>diagnostics on failure</td><td class="drop">ignored (ponytail-deferred)</td><td class="new">captured → <span class="mono">log level:error</span></td></tr>
+      </table>
+      <p class="mut" style="margin:0"><b>Proposal:</b> grow the <code>WorkerEvent</code> union with
+        <span class="pill">reasoning</span><span class="pill">tool-result</span><span class="pill">file-change</span><span class="pill">usage</span>,
+        pair each <code>tool-call</code> with its <code>tool-result</code> by item id, stamp every event with a
+        <code>ts</code>, and capture the child's stderr. The webview timeline renders the real run.</p>
+    </div>
+  </div>
+
+  <!-- VERIFICATION -->
+  <div class="facet ver">
+    <div class="fhd"><span class="ftag">FACET 2</span>
+      <span class="ftitle">Verification — refuse to claim "done" without proof</span>
+      <span class="fwhat">the honesty gate</span></div>
+    <div class="fbd">
+      <p class="why"><b>Why:</b> self-verification is the single biggest cheap win in the literature —
+        running generated tests to pick solutions lifts HumanEval pass@1 <b>47.0% → 65.8%</b>
+        (<a href="https://arxiv.org/abs/2207.10397">CodeT</a>); a learned best-of-K verifier lifts SWE-bench
+        Verified <b>20.6% → 32.0%</b> (<a href="https://arxiv.org/html/2412.21139v1">SWE-Gym</a>); Reflexion's
+        run-tests-and-retry reaches <b>91%</b> vs an 80% baseline
+        (<a href="https://arxiv.org/abs/2303.11366">Reflexion</a>). The causal driver is <i>execution</i>, not
+        reflection — gains evaporate when there's nothing to run
+        (<a href="https://arxiv.org/abs/2304.05128">Self-Debugging</a>).</p>
+      <p class="mut" style="margin:0 0 10px">The design rule from the research is blunt: <b>gate "done" on an
+        executable signal, never the agent's claim</b>, and run the verifier <i>independently</i> of the agent
+        (held-out, outside its sandbox, agent never authors its own assertions). Real systems do exactly this —
+        Aider auto-lints edited files and treats non-zero exit as the repair trigger; Microsoft's Agent Framework
+        returns <code>exit_code/stdout/stderr</code> separately so success is read from the code.</p>
+      <pre class="code"><span class="c">// harness gains one optional field — a list of independent checks</span>
+<span class="k">interface</span> <span class="t">Harness</span> {
+  sandbox: SandboxMode;
+  workingDir: <span class="t">string</span>;
+  verification?: { command: <span class="t">string</span>; label?: <span class="t">string</span> }[];   <span class="c">// e.g. [{command:"npm test"},{command:"npm run lint"}]</span>
+  maxSteps?: <span class="t">number</span>;        <span class="c">// guardrail (facet 3)</span>
+  timeoutMs?: <span class="t">number</span>;       <span class="c">// guardrail (facet 3)</span>
+}</pre>
+      <div class="flow" style="margin-top:12px">
+        <span class="n">agent emits done</span><span class="ar">→</span>
+        <span class="n">run verify[] in workingDir</span><span class="ar">→</span>
+        <span class="n">emit verification{command, ok, output}</span><span class="ar">→</span>
+        <span class="n">done{verified: all ok}</span>
+      </div>
+      <p class="mut" style="margin:10px 0 0"><b>Proposal:</b> after the agent's <code>done</code>, the runner runs
+        each verify command in <code>workingDir</code>, emits a <code>verification</code> event per check
+        (command · ok · truncated output), and the final <code>done</code> carries <code>verified: boolean</code>.
+        A failing check means the run is reported <b>not truly done</b> — the "better harness" value made visible.
+        <b>No auto-repair / re-prompt</b> here: that's a loop the <i>Orchestrator</i> owns (Epic 3+). Epic 2 makes
+        the truth visible; acting on it comes later.</p>
+    </div>
+  </div>
+
+  <!-- GUARDRAILS -->
+  <div class="facet grd">
+    <div class="fhd"><span class="ftag">FACET 3</span>
+      <span class="ftitle">Guardrails — cap what it can spend and touch</span>
+      <span class="fwhat">the circuit breaker</span></div>
+    <div class="fbd">
+      <p class="why"><b>Why:</b> agentic loops resend full history every step, burning ~50× single-turn tokens;
+        without a hard cap they run away — every framework ships one (LangChain <code>max_iterations</code>
+        defaults to <b>15</b>, LangGraph <code>recursion_limit</code> <b>25</b>, OpenHands
+        <code>max_iterations</code> + <code>max_budget_per_task</code>). OWASP names the two risks directly:
+        <b>LLM06 Excessive Agency</b> and <b>LLM10 Unbounded Consumption</b>
+        (<a href="https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/">OWASP LLM Top-10</a>).</p>
+      <div class="note warn" style="margin:0 0 12px"><b>Verified reality (codex 0.142.2 — checked on this machine):</b>
+        <code>codex exec</code> gives us the <b>sandbox</b> layer natively (<code>-s read-only |
+        workspace-write | danger-full-access</code>, network off by default) and a <b>policy</b> layer
+        (execpolicy <code>.rules</code>: allow/prompt/forbidden, plus <code>--ask-for-approval never</code> for
+        headless). It has <b>no</b> step-cap, token-cap, or wall-clock flag — and interactive "approval" is
+        meaningless in a non-interactive run (nobody's there to click yes). So the harness's job here is the
+        <b>resource-cap circuit breaker</b> Codex lacks.</div>
+      <div class="flow">
+        <span class="n">count tool-call events</span><span class="ar">·</span>
+        <span class="n">watch wall-clock</span><span class="ar">→</span>
+        <span class="n">cap breached?</span><span class="ar">→</span>
+        <span class="n kill">proc.kill()</span><span class="ar">→</span>
+        <span class="n kill">error: "step cap (N) exceeded"</span>
+      </div>
+      <p class="mut" style="margin:10px 0 0"><b>Proposal:</b> the runner enforces <code>harness.maxSteps</code>
+        (count <code>tool-call</code> events, <code>kill()</code> past the cap) and <code>harness.timeoutMs</code>
+        (wall-clock <code>kill()</code>), each surfaced as an <code>error</code> event so the UI shows <i>why</i>
+        it stopped. Sandbox already ships (Epic 1) — Epic 2 just exposes the full mode picker + an
+        <code>--add-dir</code> writable-roots input. <b>Token cap:</b> Codex reports usage only at
+        <code>turn.completed</code> (the end), so a hard mid-run token budget isn't enforceable from the stream —
+        we surface final usage now and defer a real token budget to the HTTP loop (Epic 5), where we own every
+        request. <b>Approval:</b> stays config (execpolicy <code>.rules</code> + <code>never</code>), not code —
+        deny-lists are the durable headless guarantee, not interactive prompts.</p>
+    </div>
+  </div>
+
+  <h2>The proposal in one picture</h2>
+  <p class="mut">Everything Epic 2 adds lives in two places: the normalized <code>WorkerEvent</code> union (CLI-agnostic)
+     and the runner wrapper (counts, caps, post-run verify). The Codex adapter only gains richer
+     <code>parseEvents</code> mapping. Nothing about this is Codex-specific by contract.</p>
+  <pre class="code"><span class="c">// adapters/types.ts — the CLI-agnostic contract grows (Epic 2 additions marked +)</span>
+<span class="k">type</span> <span class="t">WorkerEvent</span> =
+  | { type: <span class="s">"started"</span> }
+  | { type: <span class="s">"agent-message"</span>; text: <span class="t">string</span> }
+  | { type: <span class="s">"reasoning"</span>; text: <span class="t">string</span> }                                  <span class="n">// +</span>
+  | { type: <span class="s">"tool-call"</span>; id?: <span class="t">string</span>; name: <span class="t">string</span>; detail?: <span class="t">string</span> }
+  | { type: <span class="s">"tool-result"</span>; id?: <span class="t">string</span>; exitCode?: <span class="t">number</span>; ok: <span class="t">boolean</span>; output?: <span class="t">string</span> }  <span class="n">// +</span>
+  | { type: <span class="s">"file-change"</span>; path: <span class="t">string</span>; kind: <span class="t">string</span> }                <span class="n">// +</span>
+  | { type: <span class="s">"usage"</span>; inputTokens?: <span class="t">number</span>; outputTokens?: <span class="t">number</span>; cachedInputTokens?: <span class="t">number</span> }  <span class="n">// +</span>
+  | { type: <span class="s">"log"</span>; level: <span class="s">"info"</span>|<span class="s">"warn"</span>|<span class="s">"error"</span>; text: <span class="t">string</span> }
+  | { type: <span class="s">"verification"</span>; command: <span class="t">string</span>; ok: <span class="t">boolean</span>; output?: <span class="t">string</span> }  <span class="n">// +</span>
+  | { type: <span class="s">"decision-request"</span>; questions: DecisionAsk[] }
+  | { type: <span class="s">"done"</span>; lastMessage?: <span class="t">string</span>; verified?: <span class="t">boolean</span> }       <span class="c">// + verified</span>
+  | { type: <span class="s">"error"</span>; message: <span class="t">string</span>; transport?: <span class="t">boolean</span> };
+<span class="c">// every event also gains an optional  ts: number  (emit timestamp)</span></pre>
+
+  <h2>How I'd slice it (TDD, commit per task)</h2>
+  <p class="mut">Same discipline as Epic 1: capture real Codex JSONL fixtures first, then build each unit against
+     reality. Roughly five tasks — final boundaries land in the detailed plan.</p>
+  <ol class="steps">
+    <li><b>Capture richer ground truth.</b> Run a Codex task that reasons, runs a command (non-zero exit), and
+      edits a file; save the real JSONL. Build the new mappings against it, not memory.</li>
+    <li><b>Observability — expand <code>WorkerEvent</code> + Codex <code>parseEvents</code>.</b> reasoning,
+      tool-result (pair by item id), file-change, usage, timestamps. Pure parser tests over the fixtures.</li>
+    <li><b>Runner — stderr capture + guardrail circuit breaker.</b> <code>maxSteps</code> (count tool-calls →
+      <code>kill</code>), <code>timeoutMs</code> (wall-clock → <code>kill</code>), stderr → <code>log</code>.
+      Tested with the fake spawn (no real process).</li>
+    <li><b>Verification gate.</b> After <code>done</code>, run <code>harness.verification[]</code> in
+      <code>workingDir</code> via an injectable runner; emit <code>verification</code> events; set
+      <code>done.verified</code>. Tested with a fake command runner.</li>
+    <li><b>Webview — render the real harness.</b> Event-typed timeline (reasoning collapsed, tool-call/result
+      paired, file changes, usage footer, verification badges), plus harness inputs (verify commands, max steps,
+      timeout, writable dirs). Manual end-to-end smoke against real Codex.</li>
+  </ol>
+
+  <h2>Out of scope (correctly deferred)</h2>
+  <p><span class="pill">auto-repair / re-prompt loop</span><span class="pill">soul injection (Epic 3)</span>
+     <span class="pill">mid-run token budget (Epic 5 — HTTP loop)</span>
+     <span class="pill">multi-account / tier fallback (Epic 6)</span>
+     <span class="pill">approval-as-code (stays execpolicy config)</span></p>
+  <div class="note good">Epic 2 makes the Worker <b>observable, honest, and bounded</b> on the Codex bridge —
+     behind a contract Epic 4's CLIs and Epic 5's HTTP loop reuse unchanged. That's the "great harness" the whole
+     extension is betting on, made real and visible.</div>
+
+  <div class="ask">
+    <h3>Your review gate</h3>
+    <p style="margin:6px 0 0">This is the researched shape of Epic 2 — three facets (Observability · Verification ·
+       Guardrails), grounded in the evidence and in Codex's verified event/flag reality. If the scope and the
+       proposal look right, I'll write the full task-by-task <b>Epic 2 plan</b> to
+       <code>docs/superpowers/plans/2026-06-26-worker-epic2-harness-core.md</code> (TDD, ready to execute). Tell me
+       if you want any facet's scope, the <code>WorkerEvent</code> shape, or the verification/cap semantics changed
+       first.</p>
+  </div>
+
+  <h2>Sources</h2>
+  <ul class="srcs">
+    <li>Harness &gt; model — <a href="https://arxiv.org/pdf/2405.15793">SWE-agent (NeurIPS 2024)</a> ·
+      <a href="https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering">LangChain harness engineering</a> ·
+      <a href="https://vercel.com/blog/we-removed-80-percent-of-our-agents-tools">Vercel tool pruning</a></li>
+    <li>"Done" ≠ done — <a href="https://docs.bswen.com/blog/2026-06-25-ai-coding-agent-false-positive-failure/">42% false-positive (bswen)</a> ·
+      <a href="https://cursor.com/blog/reward-hacking-coding-benchmarks">reward hacking (Cursor)</a></li>
+    <li>Verification gains — <a href="https://arxiv.org/abs/2207.10397">CodeT</a> ·
+      <a href="https://arxiv.org/abs/2303.11366">Reflexion</a> ·
+      <a href="https://arxiv.org/html/2412.21139v1">SWE-Gym verifier</a> ·
+      <a href="https://arxiv.org/abs/2304.05128">Self-Debugging</a> ·
+      <a href="https://aider.chat/docs/usage/lint-test.html">Aider lint/test</a></li>
+    <li>Observability — <a href="https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md">OTel GenAI spans</a> ·
+      <a href="https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs">Codex exec events</a> ·
+      <a href="https://docs.datadoghq.com/llm_observability/terms/">Datadog LLM obs</a></li>
+    <li>Guardrails — <a href="https://developers.openai.com/codex/concepts/sandboxing">Codex sandboxing</a> ·
+      <a href="https://developers.openai.com/codex/rules">Codex execpolicy</a> ·
+      <a href="https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/">OWASP LLM Top-10</a> ·
+      <a href="https://leanopstech.com/blog/agentic-ai-cost-runaway-token-budget-2026/">agentic cost runaway</a></li>
+  </ul>
+
+  <footer>
+    Source of truth is the spec markdown; this is a human-facing review artifact for Epic 2.
+    Research fact-checked 2026-06-26 · generated from <span class="mono">docs/superpowers/specs/2026-06-26-worker-design.md</span>.
+  </footer>
+</div>
+</body>
+</html>
