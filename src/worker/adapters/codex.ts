@@ -164,7 +164,7 @@ function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | Worker
     case "turn.completed": {
       const usage = obj.usage as CodexUsage | undefined;
       const done: WorkerEvent = { type: "done", lastMessage: state.lastMessage };
-      if (!usage) {
+      if (!usage || (usage.input_tokens === undefined && usage.cached_input_tokens === undefined && usage.output_tokens === undefined)) {
         return done;
       }
       return [

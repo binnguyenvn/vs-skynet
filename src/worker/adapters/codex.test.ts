@@ -184,6 +184,11 @@ suite("codexAdapter.parseEvents", () => {
     ]);
   });
 
+  test("does not emit a usage event when usage is empty", async () => {
+    const events = await collect(codexAdapter.parseEvents(streamOf('{"type":"turn.completed","usage":{}}\n')));
+    assert.deepStrictEqual(events, [{ type: "done", lastMessage: undefined }]);
+  });
+
   test("maps an item.completed error to an error event", async () => {
     const line =
       '{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Falling back from WebSockets to HTTPS transport."}}\n';
