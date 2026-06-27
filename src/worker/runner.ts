@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, exec } from "child_process";
 import type { Worker } from "./types";
 import { codexAdapter } from "./adapters/codex";
 import type { AgentAdapter, Credentials, Invocation, WorkerEvent } from "./adapters/types";
@@ -17,11 +17,25 @@ export interface SpawnedProcess {
 
 export type SpawnFn = (inv: Invocation) => SpawnedProcess;
 
+export type VerifyFn = (command: string, cwd: string) => Promise<{ ok: boolean; output?: string }>;
+
 export interface RunDeps {
   spawnFn?: SpawnFn;
   adapter?: AgentAdapter;
   credentials?: Credentials;
   now?: () => number;
+  verifyFn?: VerifyFn;
+}
+
+const VERIFY_TIMEOUT_MS = 120_000;
+
+function defaultVerify(command: string, cwd: string): Promise<{ ok: boolean; output?: string }> {
+  return new Promise((resolve) => {
+    exec(command, { cwd, timeout: VERIFY_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const output = `${stdout}${stderr}`.trim();
+      resolve({ ok: !err, output: output || undefined });
+    });
+  });
 }
 
 export function runWorker(
@@ -46,10 +60,17 @@ export function runWorker(
     return { cancel: () => {}, done: Promise.resolve() };
   }
 
+  const verifyFn = deps.verifyFn ?? defaultVerify;
+  let pendingDone: Extract<WorkerEvent, { type: "done" }> | null = null;
+
   const done = (async () => {
     const stderrDone = drainStderr(proc.stderr, emit);
     try {
       for await (const event of adapter.parseEvents(proc.stdout)) {
+        if (event.type === "done") {
+          pendingDone = event;
+          continue;
+        }
         emit(event);
       }
       const exit = await proc.exit;
@@ -57,6 +78,21 @@ export function runWorker(
         emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
       } else if (exit.code !== null && exit.code !== 0) {
         emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
+      } else if (pendingDone) {
+        const checks = worker.harness.verification ?? [];
+        if (checks.length === 0) {
+          emit(pendingDone);
+        } else {
+          let verified = true;
+          for (const check of checks) {
+            const r = await verifyFn(check.command, worker.harness.workingDir);
+            emit({ type: "verification", command: check.command, ok: r.ok, output: r.output });
+            if (!r.ok) {
+              verified = false;
+            }
+          }
+          emit({ ...pendingDone, verified });
+        }
       }
     } catch (err) {
       emit({ type: "error", message: errString(err), transport: isTransport(err) });

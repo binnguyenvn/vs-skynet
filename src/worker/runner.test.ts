@@ -113,6 +113,46 @@ suite("runWorker", () => {
     );
   });
 
+  test("runs verification checks after done and sets verified", async () => {
+    const events: WorkerEvent[] = [];
+    const ran: { command: string; cwd: string }[] = [];
+    const w = worker();
+    w.harness.verification = [{ command: "npm test" }, { command: "npm run lint" }];
+    const { proc } = fakeProcess(
+      ['{"type":"item.completed","item":{"type":"agent_message","text":"all set"}}\n', '{"type":"turn.completed","usage":{}}\n'],
+      { code: 0 },
+    );
+    const handle = runWorker(w, "t", (e) => events.push(e), {
+      spawnFn: () => proc,
+      now: () => NOW,
+      verifyFn: async (command, cwd) => {
+        ran.push({ command, cwd });
+        return { ok: command === "npm test", output: command + " output" };
+      },
+    });
+    await handle.done;
+    assert.deepStrictEqual(ran, [
+      { command: "npm test", cwd: w.harness.workingDir },
+      { command: "npm run lint", cwd: w.harness.workingDir },
+    ]);
+    const verifications = events.filter((e) => e.type === "verification");
+    assert.deepStrictEqual(
+      verifications.map((e) => (e as { command: string; ok: boolean }).ok),
+      [true, false],
+    );
+    const doneEvent = events.find((e) => e.type === "done") as { verified?: boolean };
+    assert.strictEqual(doneEvent.verified, false);
+  });
+
+  test("done carries no verified key when no checks are configured", async () => {
+    const events: WorkerEvent[] = [];
+    // ponytail: omit "usage" so turn.completed only emits done (usage:{} emits a usage event too)
+    const { proc } = fakeProcess(['{"type":"turn.completed"}\n'], { code: 0 });
+    const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.deepStrictEqual(events, [{ type: "done", lastMessage: undefined, ts: NOW }]);
+  });
+
   test("real codex: runs a trivial task end to end", async function () {
     const available = spawnSync("codex", ["--version"]).status === 0;
     if (!available) {

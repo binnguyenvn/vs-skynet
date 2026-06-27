@@ -24,8 +24,8 @@ export interface Agent {
 export interface Harness {
   sandbox: SandboxMode;
   workingDir: string;
-  // ponytail: Epic 1 only needs sandbox + workingDir. tools/observability/
-  // verification facets are added in Epic 2 when they have real shapes.
+  verification?: { command: string; label?: string }[]; // independent checks run AFTER the agent's done (Epic 2)
+  // ponytail: writableRoots/maxSteps/timeoutMs added in US-3 of this epic.
 }
 
 export interface Soul {
