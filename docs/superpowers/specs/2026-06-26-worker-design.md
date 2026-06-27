@@ -399,7 +399,7 @@ Gemini CLI is unconfirmed — verify before building `google × cli`.
 
 ## 10. UI (webview)
 
-`src/webview/views/worker.tsx` — reuses existing shadcn primitives.
+`src/webview/integration-test/worker.tsx` — reuses existing shadcn primitives.
 
 - **Soul picker:** role `<Select>` (developer first). Shows the role's
   responsibilities/methodology.
