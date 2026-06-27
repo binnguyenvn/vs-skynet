@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PlayIcon, SquareIcon } from "lucide-react";
+import { PlayIcon, SquareIcon, DicesIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,13 @@ import type { WorkerEvent } from "../../worker/adapters/types";
 
 const WORKER_ID = "worker-1";
 const SANDBOXES: SandboxMode[] = ["read-only", "workspace-write", "danger-full-access"];
+
+// e2e sample presets — task paired with a sandbox that can actually run it.
+const SAMPLES: { sandbox: SandboxMode; task: string }[] = [
+  { sandbox: "read-only", task: "List the files in the working directory and summarize what this project does." },
+  { sandbox: "workspace-write", task: "Create a file named e2e-codex.txt containing the line 'hello from codex e2e'." },
+  { sandbox: "read-only", task: "Read package.json and tell me the project name, version, and main scripts." },
+];
 
 export function WorkerView() {
   const [sandbox, setSandbox] = useState<SandboxMode>("read-only");
@@ -74,6 +81,20 @@ export function WorkerView() {
   function cancel() {
     postMessage({ type: "cancelTask", workerId: WORKER_ID });
     setRunning(false);
+  }
+
+  // Fill the form with a runnable e2e preset so Run can be pressed immediately.
+  function randomFill() {
+    const sample = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
+    const id = Math.random().toString(36).slice(2, 10);
+    setSandbox(sample.sandbox);
+    setTask(sample.task);
+    setWorkingDir(`~/.temp/${id}`);
+    setModel("");
+    setMaxSteps("");
+    setTimeoutSec("");
+    setWritableDirs("");
+    setVerifyCommands([]);
   }
 
   return (
@@ -165,6 +186,10 @@ export function WorkerView() {
       </div>
 
       <div className="flex gap-2">
+        <Button variant="outline" onClick={randomFill} disabled={running}>
+          <DicesIcon />
+          Random fill
+        </Button>
         <Button onClick={run} disabled={running || !task.trim() || !workingDir.trim()}>
           <PlayIcon />
           Run

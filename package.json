@@ -18,16 +18,16 @@
         "title": "Hello World"
       },
       {
-        "command": "skynet-harness.openWebview",
-        "title": "Skynet: Open Webview"
+        "command": "skynet-harness.e2e.openWebview",
+        "title": "Skynet E2E: Open Webview"
       },
       {
-        "command": "skynet-harness.openGallery",
-        "title": "Skynet: Open Component Gallery"
+        "command": "skynet-harness.e2e.openGallery",
+        "title": "Skynet E2E: Open Component Gallery"
       },
       {
-        "command": "skynet-harness.openWorker",
-        "title": "Skynet: Open Worker"
+        "command": "skynet-harness.e2e.openWorker",
+        "title": "Skynet E2E: Open Worker"
       }
     ]
   },

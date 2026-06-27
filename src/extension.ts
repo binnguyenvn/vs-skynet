@@ -22,13 +22,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(disposable);
 
-	const openPanel = vscode.commands.registerCommand("skynet-harness.openWebview", () => {
+	const openPanel = vscode.commands.registerCommand("skynet-harness.e2e.openWebview", () => {
 		openWebview(context, "hello");
 	});
-	const openGallery = vscode.commands.registerCommand("skynet-harness.openGallery", () => {
+	const openGallery = vscode.commands.registerCommand("skynet-harness.e2e.openGallery", () => {
 		openWebview(context, "gallery");
 	});
-	const openWorker = vscode.commands.registerCommand("skynet-harness.openWorker", () => {
+	const openWorker = vscode.commands.registerCommand("skynet-harness.e2e.openWorker", () => {
 		openWebview(context, "worker");
 	});
 	context.subscriptions.push(openPanel, openGallery, openWorker);
