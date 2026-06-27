@@ -19,7 +19,12 @@ export const codexAdapter: AgentAdapter = {
       "-C",
       harness.workingDir,
       "--skip-git-repo-check",
+      "-c",
+      "model_reasoning_summary=auto",
     ];
+    for (const root of harness.writableRoots ?? []) {
+      args.push("--add-dir", root);
+    }
     if (agent.model) {
       args.push("-m", agent.model);
     }
@@ -37,7 +42,17 @@ interface CodexItem {
   type?: string;
   text?: string;
   command?: string;
+  aggregated_output?: string;
+  exit_code?: number;
+  message?: string;
+  changes?: { path?: string; kind?: string }[];
   [k: string]: unknown;
+}
+
+interface CodexUsage {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
 }
 
 interface CodexEvent {
@@ -45,12 +60,19 @@ interface CodexEvent {
   item?: CodexItem;
   message?: string;
   error?: { message?: string };
+  usage?: unknown;
   [k: string]: unknown;
 }
 
 interface ParseState {
   started: boolean;
   lastMessage?: string;
+}
+
+const MAX_OUTPUT = 4000; // ponytail: cap tool/command output so one event can't be a megabyte
+
+function truncate(s: string): string {
+  return s.length > MAX_OUTPUT ? s.slice(0, MAX_OUTPUT) + "\n…(truncated)" : s;
 }
 
 async function* parseCodexEvents(raw: AsyncIterable<Buffer>): AsyncIterable<WorkerEvent> {
@@ -60,34 +82,33 @@ async function* parseCodexEvents(raw: AsyncIterable<Buffer>): AsyncIterable<Work
     buffer += chunk.toString("utf8");
     let nl: number;
     while ((nl = buffer.indexOf("\n")) >= 0) {
-      const event = parseLine(buffer.slice(0, nl), state);
+      yield* parseLine(buffer.slice(0, nl), state);
       buffer = buffer.slice(nl + 1);
-      if (event) {
-        yield event;
-      }
     }
   }
-  const tail = parseLine(buffer, state);
-  if (tail) {
-    yield tail;
-  }
+  yield* parseLine(buffer, state);
 }
 
-function parseLine(line: string, state: ParseState): WorkerEvent | null {
+function* parseLine(line: string, state: ParseState): Generator<WorkerEvent> {
   const trimmed = line.trim();
   if (!trimmed) {
-    return null;
+    return;
   }
   let obj: CodexEvent;
   try {
     obj = JSON.parse(trimmed) as CodexEvent;
   } catch {
-    return null; // noise line (e.g. "Reading additional input from stdin...")
+    return; // noise line (e.g. "Reading additional input from stdin...")
   }
-  return mapCodexEvent(obj, state);
+  const mapped = mapCodexEvent(obj, state);
+  if (Array.isArray(mapped)) {
+    yield* mapped;
+  } else if (mapped) {
+    yield mapped;
+  }
 }
 
-function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | null {
+function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | WorkerEvent[] | null {
   switch (obj.type) {
     case "thread.started":
       if (state.started) {
@@ -100,6 +121,7 @@ function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | null {
       if (item?.type === "command_execution") {
         return {
           type: "tool-call",
+          id: item.id,
           name: "shell",
           detail: typeof item.command === "string" ? item.command : undefined,
         };
@@ -108,21 +130,53 @@ function mapCodexEvent(obj: CodexEvent, state: ParseState): WorkerEvent | null {
     }
     case "item.completed": {
       const item = obj.item;
-      if (item?.type === "agent_message" && typeof item.text === "string") {
+      if (!item?.type) {
+        return null;
+      }
+      if (item.type === "agent_message" && typeof item.text === "string") {
         state.lastMessage = item.text;
         return { type: "agent-message", text: item.text };
       }
-      if (item?.type === "command_execution") {
-        return null; // already surfaced on item.started
+      if (item.type === "reasoning" && typeof item.text === "string") {
+        return { type: "reasoning", text: item.text };
       }
-      if (item?.type) {
-        // ponytail: unknown item types surfaced as a log; full observability is Epic 2.
-        return { type: "log", level: "info", text: item.type };
+      if (item.type === "command_execution") {
+        return {
+          type: "tool-result",
+          id: item.id,
+          exitCode: item.exit_code,
+          ok: item.exit_code === 0,
+          output: typeof item.aggregated_output === "string" ? truncate(item.aggregated_output.trim()) : undefined,
+        };
       }
-      return null;
+      if (item.type === "file_change" && Array.isArray(item.changes)) {
+        return item.changes
+          .filter((c) => typeof c.path === "string")
+          .map((c) => ({ type: "file-change" as const, path: c.path as string, kind: c.kind ?? "modify" }));
+      }
+      if (item.type === "error") {
+        return { type: "error", message: item.message ?? "unknown codex error", transport: false };
+      }
+      // ponytail: still unmapped (e.g. mcp_tool_call, web_search) — surfaced as a log. Map when a
+      // fixture proves their real shapes (Epic 4 touches MCP); the field names aren't verified yet.
+      return { type: "log", level: "info", text: item.type };
     }
-    case "turn.completed":
-      return { type: "done", lastMessage: state.lastMessage };
+    case "turn.completed": {
+      const usage = obj.usage as CodexUsage | undefined;
+      const done: WorkerEvent = { type: "done", lastMessage: state.lastMessage };
+      if (!usage || (usage.input_tokens === undefined && usage.cached_input_tokens === undefined && usage.output_tokens === undefined)) {
+        return done;
+      }
+      return [
+        {
+          type: "usage",
+          inputTokens: usage.input_tokens,
+          cachedInputTokens: usage.cached_input_tokens,
+          outputTokens: usage.output_tokens,
+        },
+        done,
+      ];
+    }
     case "error":
     case "turn.failed":
       return { type: "error", message: errorMessage(obj), transport: false };

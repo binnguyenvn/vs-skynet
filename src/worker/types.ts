@@ -24,8 +24,10 @@ export interface Agent {
 export interface Harness {
   sandbox: SandboxMode;
   workingDir: string;
-  // ponytail: Epic 1 only needs sandbox + workingDir. tools/observability/
-  // verification facets are added in Epic 2 when they have real shapes.
+  writableRoots?: string[]; // extra --add-dir writable roots (Epic 2)
+  verification?: { command: string; label?: string }[]; // independent checks run AFTER the agent's done (Epic 2)
+  maxSteps?: number; // circuit breaker: max tool-call events before kill (Epic 2)
+  timeoutMs?: number; // circuit breaker: wall-clock kill (Epic 2)
 }
 
 export interface Soul {

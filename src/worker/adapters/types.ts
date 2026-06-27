@@ -19,14 +19,20 @@ export interface DecisionAsk {
   context?: string;
 }
 
-export type WorkerEvent =
+export type WorkerEvent = (
   | { type: "started" }
   | { type: "agent-message"; text: string }
-  | { type: "tool-call"; name: string; detail?: string }
+  | { type: "reasoning"; text: string } // +
+  | { type: "tool-call"; id?: string; name: string; detail?: string } // + id
+  | { type: "tool-result"; id?: string; exitCode?: number; ok: boolean; output?: string } // +
+  | { type: "file-change"; path: string; kind: string } // +
+  | { type: "usage"; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number } // +
   | { type: "log"; level: "info" | "warn" | "error"; text: string }
+  | { type: "verification"; command: string; ok: boolean; output?: string } // + (US-2)
   | { type: "decision-request"; questions: DecisionAsk[] }
-  | { type: "done"; lastMessage?: string }
-  | { type: "error"; message: string; transport?: boolean }; // transport=true -> fallback-eligible (Epic 6)
+  | { type: "done"; lastMessage?: string; verified?: boolean } // + verified (US-2)
+  | { type: "error"; message: string; transport?: boolean; terminal?: boolean } // transport=true -> fallback-eligible (Epic 6); terminal=true -> the run is over (runner-generated, not a stream diagnostic)
+) & { ts?: number }; // + every event optionally carries a runner-stamped emit timestamp
 
 export interface AgentAdapter {
   readonly company: Company;

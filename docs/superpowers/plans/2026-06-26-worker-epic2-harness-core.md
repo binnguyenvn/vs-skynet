@@ -18,6 +18,7 @@
   - Item shapes (Codex `exec_events`): `agent_message` = `{id, type:"agent_message", text}`; `reasoning` = `{id, type:"reasoning", text}`; `command_execution` = `{id, type:"command_execution", command, aggregated_output, exit_code, status}` (emitted as `item.started` then `item.completed`); `file_change` = `{id, type:"file_change", changes:[{path, kind}]}`; `usage` on `turn.completed` = `{input_tokens, cached_input_tokens, output_tokens, ...}`.
   - **Errors arrive two ways** (verified live this session): a bare `{"type":"error","message":...}` (e.g. transient `Reconnecting... 2/5 (request timed out)`) **and** an `item.completed` whose `item.type` is `"error"` carrying `{id, message, type}`. Both map to an `error` `WorkerEvent`.
   - Codex reports token usage **only at `turn.completed`** (the end) — a mid-run token budget is NOT enforceable from the stream and is explicitly deferred to Epic 5.
+  - **`reasoning` items are emitted only with `-c model_reasoning_summary=auto`** (verified live during Task 1). Without it GPT-5.x encrypts reasoning and `--json` shows nothing. `buildInvocation` passes this flag (Task 2). GPT-5.x additionally needed `-c model_supports_reasoning_summaries=true` at capture time, but forcing that capability across all models is unsafe and is left out (known limitation).
   - `-s/--sandbox` ∈ `{read-only, workspace-write, danger-full-access}`. Network is off by default in the sandbox.
   - Spawn with `stdio: ["ignore", "pipe", "pipe"]` — an open stdin makes Codex block on `Reading additional input from stdin...`.
 - **No auto-repair / re-prompt in Epic 2.** The verification gate makes the truth *visible* (`verified: false`); acting on a failed check (re-prompting) is a loop the Orchestrator owns (Epic 3+).
@@ -113,7 +114,7 @@ git commit -m "test(worker): capture richer Codex ground-truth fixture for Epic 
 
 **Interfaces:**
 - Consumes: the Epic 1 envelope facts + Task 1 fixture.
-- Produces: the grown `WorkerEvent` union (below) and a `parseEvents` that emits `reasoning`, `tool-result` (paired with `tool-call` by item `id`), `file-change` (one per change), and `usage`. `parseEvents` stays **pure** (no clock, no `ts`); the runner stamps `ts` in Task 3.
+- Produces: the grown `WorkerEvent` union (below) and a `parseEvents` that emits `reasoning`, `tool-result` (paired with `tool-call` by item `id`), `file-change` (one per change), and `usage`. `parseEvents` stays **pure** (no clock, no `ts`); the runner stamps `ts` in Task 3. Also: `buildInvocation` gains `-c model_reasoning_summary=auto` so Codex actually emits the `reasoning` items this task learns to parse (Step 5).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -351,12 +352,34 @@ function* parseLine(line: string, state: ParseState): Generator<WorkerEvent> {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Make Codex actually emit `reasoning` at runtime**
+
+**Verified during Task 1 (codex-cli 0.142.3, live):** Codex (GPT-5.x) suppresses `reasoning` items from `--json` output unless invoked with `-c model_reasoning_summary=auto`. Without it, the reasoning event added above never fires in production — the timeline's reasoning rows stay empty. So `buildInvocation` must request reasoning summaries. Add the failing test in `src/worker/adapters/codex.test.ts` (in the `buildInvocation` suite):
+
+```ts
+test("requests reasoning summaries so reasoning items are emitted", () => {
+  const inv = codexAdapter.buildInvocation(sampleWorker(), "t", {});
+  const i = inv.args.indexOf("-c");
+  assert.ok(i >= 0 && inv.args[i + 1] === "model_reasoning_summary=auto", "expected -c model_reasoning_summary=auto");
+});
+```
+
+Then, in `src/worker/adapters/codex.ts` `buildInvocation`, add the flag to the base `args` array (right after `--skip-git-repo-check`):
+
+```ts
+"--skip-git-repo-check",
+"-c",
+"model_reasoning_summary=auto",
+```
+
+> ponytail: only the non-forcing `auto` is set — Codex decides per model, so non-reasoning models are unaffected. GPT-5.x *also* needed `-c model_supports_reasoning_summaries=true` to surface reasoning when capturing the fixture; forcing that capability across all models is risky (it asserts support a model may not have), so it's deliberately left out and flagged as a known limitation for the final review. The existing `buildInvocation` argv test must be updated to include the two new array entries.
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `npm test`
-Expected: all `parseEvents` tests PASS (new + existing, including the updated unknown-item-type test).
+Expected: all `parseEvents` and `buildInvocation` tests PASS (new + existing — remember to update the existing "builds codex exec argv" assertion to include `-c model_reasoning_summary=auto`).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/worker/adapters/types.ts src/worker/adapters/codex.ts src/worker/adapters/codex.test.ts
