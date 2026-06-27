@@ -56,7 +56,7 @@ export function runWorker(
   try {
     proc = spawnFn(invocation);
   } catch (err) {
-    emit({ type: "error", message: errString(err), transport: isTransport(err) });
+    emit({ type: "error", message: errString(err), transport: isTransport(err), terminal: true });
     return { cancel: () => {}, done: Promise.resolve() };
   }
 
@@ -101,7 +101,7 @@ export function runWorker(
         const event = result.value;
         if (event.type === "tool-call") {
           toolCalls++;
-          if (harness.maxSteps && toolCalls > harness.maxSteps) {
+          if (harness.maxSteps !== undefined && toolCalls > harness.maxSteps) {
             stopReason = "steps";
             emit(event);
             proc.kill();
@@ -119,13 +119,13 @@ export function runWorker(
       if (timer) { clearTimeout(timer); timer = undefined; }
       const exit = await proc.exit;
       if (stopReason === "steps") {
-        emit({ type: "error", message: `step cap (${harness.maxSteps}) exceeded`, transport: false });
+        emit({ type: "error", message: `step cap (${harness.maxSteps}) exceeded`, transport: false, terminal: true });
       } else if (stopReason === "timeout") {
-        emit({ type: "error", message: `timeout (${harness.timeoutMs}ms) exceeded`, transport: false });
+        emit({ type: "error", message: `timeout (${harness.timeoutMs}ms) exceeded`, transport: false, terminal: true });
       } else if (exit.error) {
-        emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error) });
+        emit({ type: "error", message: errString(exit.error), transport: isTransport(exit.error), terminal: true });
       } else if (exit.code !== null && exit.code !== 0) {
-        emit({ type: "error", message: `codex exited with code ${exit.code}`, transport: false });
+        emit({ type: "error", message: `${invocation.command} exited with code ${exit.code}`, transport: false, terminal: true });
       } else if (pendingDone) {
         const checks = harness.verification ?? [];
         if (checks.length === 0) {
@@ -143,7 +143,7 @@ export function runWorker(
         }
       }
     } catch (err) {
-      emit({ type: "error", message: errString(err), transport: isTransport(err) });
+      emit({ type: "error", message: errString(err), transport: isTransport(err), terminal: true });
     } finally {
       if (timer) { clearTimeout(timer); }
       await stderrDone;

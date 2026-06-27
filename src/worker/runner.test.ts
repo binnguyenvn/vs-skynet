@@ -90,8 +90,44 @@ suite("runWorker", () => {
     const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
     await handle.done;
     assert.deepStrictEqual(events, [
-      { type: "error", message: "codex exited with code 2", transport: false, ts: NOW },
+      { type: "error", message: "codex exited with code 2", transport: false, terminal: true, ts: NOW },
     ]);
+  });
+
+  test("passes adapter stream errors through as non-terminal (no terminal flag)", async () => {
+    const events: WorkerEvent[] = [];
+    // A bare Codex `error` envelope (e.g. a transient "Reconnecting..." diagnostic)
+    // followed by a clean turn. The diagnostic must NOT carry terminal — only `done` ends the run.
+    const { proc } = fakeProcess(
+      ['{"type":"error","message":"Reconnecting... 2/5 (request timed out)"}\n', '{"type":"turn.completed"}\n'],
+      { code: 0 },
+    );
+    const handle = runWorker(worker(), "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.deepStrictEqual(events, [
+      { type: "error", message: "Reconnecting... 2/5 (request timed out)", transport: false, ts: NOW },
+      { type: "done", lastMessage: undefined, ts: NOW },
+    ]);
+  });
+
+  test("maxSteps: 0 kills on the first tool call", async () => {
+    const events: WorkerEvent[] = [];
+    const w = worker();
+    w.harness.maxSteps = 0;
+    const { proc, wasKilled } = fakeProcess(
+      [
+        '{"type":"item.started","item":{"id":"a","type":"command_execution","command":"echo 1"}}\n',
+        '{"type":"turn.completed"}\n',
+      ],
+      { code: null },
+    );
+    const handle = runWorker(w, "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.strictEqual(wasKilled(), true);
+    const err = events.find((e) => e.type === "error") as { message: string; terminal?: boolean } | undefined;
+    assert.strictEqual(err?.message, "step cap (0) exceeded");
+    assert.strictEqual(err?.terminal, true);
+    assert.ok(!events.some((e) => e.type === "done"), "no done after a cap kill");
   });
 
   test("surfaces child stderr as error log events", async () => {

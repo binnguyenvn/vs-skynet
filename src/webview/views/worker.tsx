@@ -36,7 +36,9 @@ export function WorkerView() {
       onMessage((msg) => {
         if (msg.type === "taskEvent" && msg.workerId === WORKER_ID) {
           setEvents((prev) => [...prev, msg.event]);
-          if (msg.event.type === "done" || msg.event.type === "error") {
+          // Non-terminal stream diagnostics (e.g. Codex reconnect errors) keep the
+          // run alive; only `done` or a runner-generated terminal error ends it.
+          if (msg.event.type === "done" || (msg.event.type === "error" && msg.event.terminal)) {
             setRunning(false);
           }
         }

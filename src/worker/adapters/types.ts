@@ -31,7 +31,7 @@ export type WorkerEvent = (
   | { type: "verification"; command: string; ok: boolean; output?: string } // + (US-2)
   | { type: "decision-request"; questions: DecisionAsk[] }
   | { type: "done"; lastMessage?: string; verified?: boolean } // + verified (US-2)
-  | { type: "error"; message: string; transport?: boolean } // transport=true -> fallback-eligible (Epic 6)
+  | { type: "error"; message: string; transport?: boolean; terminal?: boolean } // transport=true -> fallback-eligible (Epic 6); terminal=true -> the run is over (runner-generated, not a stream diagnostic)
 ) & { ts?: number }; // + every event optionally carries a runner-stamped emit timestamp
 
 export interface AgentAdapter {
