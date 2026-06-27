@@ -25,13 +25,13 @@ export function WorkerView() {
   const [model, setModel] = useState("");
   const [task, setTask] = useState("");
   const [running, setRunning] = useState(false);
-  const [lines, setLines] = useState<string[]>([]);
+  const [events, setEvents] = useState<WorkerEvent[]>([]);
 
   useEffect(
     () =>
       onMessage((msg) => {
         if (msg.type === "taskEvent" && msg.workerId === WORKER_ID) {
-          setLines((prev) => [...prev, formatEvent(msg.event)]);
+          setEvents((prev) => [...prev, msg.event]);
           if (msg.event.type === "done" || msg.event.type === "error") {
             setRunning(false);
           }
@@ -53,7 +53,7 @@ export function WorkerView() {
       // ponytail: Epic 1 has no soul behavior; a placeholder keeps the type valid.
       soul: { role: "developer", identity: "", responsibilities: [] },
     };
-    setLines([]);
+    setEvents([]);
     setRunning(true);
     postMessage({ type: "runTask", worker, task });
   }
@@ -127,39 +127,61 @@ export function WorkerView() {
       </div>
 
       <ScrollArea className="h-72 rounded-md border bg-card p-3">
-        <pre className="text-xs whitespace-pre-wrap">
-          {lines.length ? lines.join("\n") : "Output will stream here."}
-        </pre>
+        {events.length ? (
+          <div className="flex flex-col gap-1 text-xs">
+            {events.map((e, i) => (
+              <EventRow key={i} event={e} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Output will stream here.</p>
+        )}
       </ScrollArea>
     </div>
   );
 }
 
-function formatEvent(e: WorkerEvent): string {
+function EventRow({ event: e }: { event: WorkerEvent }) {
   switch (e.type) {
     case "started":
-      return "started";
-    case "agent-message":
-      return e.text;
-    case "tool-call":
-      return `tool: ${e.name}${e.detail ? ": " + e.detail : ""}`;
-    case "log":
-      return e.text;
-    case "decision-request":
-      return `question: ${e.questions.map((q) => q.question).join(" | ")}`;
-    case "done":
-      return "done";
-    case "error":
-      return `error: ${e.message}`;
+      return <div className="text-muted-foreground">● started</div>;
     case "reasoning":
-      return `reasoning: ${e.text}`;
+      return <div className="text-muted-foreground italic whitespace-pre-wrap">{e.text}</div>;
+    case "agent-message":
+      return <div className="whitespace-pre-wrap">{e.text}</div>;
+    case "tool-call":
+      return <div className="font-mono">▶ {e.name}{e.detail ? `: ${e.detail}` : ""}</div>;
     case "tool-result":
-      return `tool-result: ${e.ok ? "ok" : "fail"}${e.output ? ": " + e.output : ""}`;
+      return (
+        <div className="font-mono">
+          <span className={e.ok ? "text-green-500" : "text-red-500"}>{e.ok ? "✓" : "✗"}</span>{" "}
+          exit {e.exitCode ?? "?"}
+          {e.output ? <pre className="whitespace-pre-wrap opacity-80">{e.output}</pre> : null}
+        </div>
+      );
     case "file-change":
-      return `${e.kind}: ${e.path}`;
+      return <div className="font-mono">✎ {e.kind} {e.path}</div>;
     case "usage":
-      return `tokens: in=${e.inputTokens ?? 0} out=${e.outputTokens ?? 0}`;
+      return (
+        <div className="text-muted-foreground">
+          tokens — in {e.inputTokens ?? 0} (cached {e.cachedInputTokens ?? 0}) · out {e.outputTokens ?? 0}
+        </div>
+      );
+    case "log":
+      return <div className={e.level === "error" ? "text-red-500" : "text-muted-foreground"}>{e.text}</div>;
     case "verification":
-      return `verification: ${e.ok ? "ok" : "fail"}: ${e.command}`;
+      return (
+        <div className="font-mono">
+          <span className={e.ok ? "text-green-500" : "text-red-500"}>{e.ok ? "✓" : "✗"}</span>{" "}
+          verify: {e.command}
+          {e.output ? <pre className="whitespace-pre-wrap opacity-80">{e.output}</pre> : null}
+        </div>
+      );
+    case "decision-request":
+      return <div>question: {e.questions.map((q) => q.question).join(" | ")}</div>;
+    case "done":
+      return <div className="text-green-500">● done</div>;
+    case "error":
+      return <div className="text-red-500">error: {e.message}</div>;
   }
 }
