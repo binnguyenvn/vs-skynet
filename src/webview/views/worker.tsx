@@ -26,6 +26,7 @@ export function WorkerView() {
   const [task, setTask] = useState("");
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<WorkerEvent[]>([]);
+  const [verifyCommands, setVerifyCommands] = useState<string[]>([]);
 
   useEffect(
     () =>
@@ -49,7 +50,11 @@ export function WorkerView() {
         subProtocol: { authMethod: "oauth2Pkce" },
         model: model.trim() || undefined,
       },
-      harness: { sandbox, workingDir: workingDir.trim() },
+      harness: {
+        sandbox,
+        workingDir: workingDir.trim(),
+        verification: verifyCommands.map((c) => c.trim()).filter(Boolean).map((command) => ({ command })),
+      },
       // ponytail: Epic 1 has no soul behavior; a placeholder keeps the type valid.
       soul: { role: "developer", identity: "", responsibilities: [] },
     };
@@ -113,6 +118,27 @@ export function WorkerView() {
           rows={3}
           placeholder="Describe the task..."
         />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label>Verification checks (run after the agent finishes)</Label>
+        {verifyCommands.map((cmd, i) => (
+          <div key={i} className="flex gap-2">
+            <Input
+              value={cmd}
+              onChange={(e) =>
+                setVerifyCommands((prev) => prev.map((c, j) => (j === i ? e.target.value : c)))
+              }
+              placeholder="npm test"
+            />
+            <Button variant="outline" onClick={() => setVerifyCommands((prev) => prev.filter((_, j) => j !== i))}>
+              Remove
+            </Button>
+          </div>
+        ))}
+        <Button variant="outline" onClick={() => setVerifyCommands((prev) => [...prev, ""])}>
+          Add check
+        </Button>
       </div>
 
       <div className="flex gap-2">
@@ -180,7 +206,11 @@ function EventRow({ event: e }: { event: WorkerEvent }) {
     case "decision-request":
       return <div>question: {e.questions.map((q) => q.question).join(" | ")}</div>;
     case "done":
-      return <div className="text-green-500">● done</div>;
+      return (
+        <div className={e.verified === false ? "text-red-500" : "text-green-500"}>
+          ● done{e.verified === undefined ? "" : e.verified ? " — verified ✓" : " — NOT verified ✗"}
+        </div>
+      );
     case "error":
       return <div className="text-red-500">error: {e.message}</div>;
   }
