@@ -173,6 +173,22 @@ suite("runWorker", () => {
     assert.ok(!events.some((e) => e.type === "done"), "no done after a cap kill");
   });
 
+  test("clean run with a generous timeout emits done, not timeout error", async () => {
+    // Guards the timer-race fix: disarming the timer before await proc.exit must
+    // prevent a spurious "timeout exceeded" error on a normal completion.
+    const events: WorkerEvent[] = [];
+    const w = worker();
+    w.harness.timeoutMs = 10_000; // generous — the run completes in <1ms
+    const { proc } = fakeProcess(
+      ['{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}\n', '{"type":"turn.completed"}\n'],
+      { code: 0 },
+    );
+    const handle = runWorker(w, "t", (e) => events.push(e), { spawnFn: () => proc, now: () => NOW });
+    await handle.done;
+    assert.ok(events.some((e) => e.type === "done"), "expected done event");
+    assert.ok(!events.some((e) => e.type === "error"), "must not emit any error");
+  });
+
   test("kills and errors when the wall-clock timeout fires", async () => {
     const events: WorkerEvent[] = [];
     const w = worker();

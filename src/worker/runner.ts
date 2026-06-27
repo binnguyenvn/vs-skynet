@@ -114,6 +114,9 @@ export function runWorker(
         }
         emit(event);
       }
+      // Disarm the timer synchronously before any await so it cannot fire
+      // during the proc.exit window and wrongly set stopReason = "timeout".
+      if (timer) { clearTimeout(timer); timer = undefined; }
       const exit = await proc.exit;
       if (stopReason === "steps") {
         emit({ type: "error", message: `step cap (${harness.maxSteps}) exceeded`, transport: false });
