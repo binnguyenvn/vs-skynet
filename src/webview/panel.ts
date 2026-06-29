@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { streamAgyTestToWebview } from "../adapters/agy/webview-bridge";
 import { streamCodexTestToWebview } from "../adapters/codex/webview-bridge";
 import { buildWebviewHtml, nonce } from "./html";
 import type { WebviewToExtension } from "./protocol";
@@ -40,6 +41,10 @@ export function openWebview(
       if (msg.type === "testCodex") {
         const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
         void streamCodexTestToWebview(webview, cwd);
+      }
+      if (msg.type === "testAgy") {
+        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
+        void streamAgyTestToWebview(webview, cwd);
       }
     },
     undefined,
