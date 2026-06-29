@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skynet — Product Vision (redesign)</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .p1{color:var(--acc)} .p2{color:var(--grn)}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Skynet — Product Vision <span class="mut">(redesign)</span></h1>
+  <p class="sub">North-star umbrella · the single source of truth for the whole extension.</p>
+  <div class="tags">
+    <span class="tag">2026-06-29</span>
+    <span class="tag">supersedes the 2026-06-26 vision + worker roadmap</span>
+    <span class="tag">spec: docs/superpowers/specs/2026-06-29-skynet-vision-design.md</span>
+  </div>
+
+  <h2>1. North star</h2>
+  <p>A developer hands Skynet an <b>idea</b>; Skynet runs a disciplined delivery workflow as an
+     orchestrated AI team — pausing only for the decisions a human must make — and returns a
+     <b>real, tested, reviewed product</b>, not tech-debt. <code>Worker = Agent + Harness + Soul</code>
+     stays the executor model. The redesign keeps that core; it changes the <b>build order</b>, makes
+     <b>provable operation</b> a requirement of every layer, and promotes <b>Tools/Plugins</b> to its own
+     subsystem.</p>
+
+  <h2>2. Why this redesign</h2>
+  <p>The previous plan built <b>Codex-only, deep first</b>. Two failures surfaced:</p>
+  <ol>
+    <li><b>Single-provider block</b> — when the one Codex agent hit a rate limit, the whole dev/test loop
+        stalled with nothing to fall back to.</li>
+    <li><b>No visible proof</b> — the harness test couldn't show whether the implementation actually worked;
+        it just silently stopped.</li>
+  </ol>
+
+  <h2>3. Cross-cutting principles</h2>
+  <h3><span class="p1">P1 — Never blocked by one provider</span></h3>
+  <p>Multiple CLI adapters (codex, claude, agy) are built <b>first</b> so no single provider's limit can
+     block downstream work. In Phase 1 the adapter is selected and switched <b>manually</b> on a limit;
+     <b>automated</b> fallback is a later (Orchestrator) concern — see Decision A.</p>
+  <h3><span class="p2">P2 — Every layer proves itself</span></h3>
+  <p>Each pre-MVP layer is accepted <b>only</b> by a real end-to-end run, against real CLIs, rendered live
+     as a <b>step-function state machine</b>: each step shows Success / Failed / Cancelled / In-Progress.
+     A hung or rate-limited step renders In-Progress → Failed — never a silent stall. The panel is a
+     <b>permanent product feature</b> and doubles as each layer's acceptance proof.</p>
+
+  <h2>4. System map — six subsystems</h2>
+<pre>① Adapters ──▶ ② Harness ──▶ ③ Soul ──▶ ④ Tools/Plugins
+  codex          control       roles       catalog + install
+  claude         + step-fn      identity    + per-task gating
+  agy            panel (P2)
+       └──────────────┴───────────┴────────────┘
+                         │ all wrapped by
+                         ▼
+                 ⑤ Orchestrator  ── the biggest harness = MVP
+                         │
+                 ⑥ Management (post-MVP): CRUD agents/tools/
+                    plugins/identities, persistence, multi-account</pre>
+
+  <h2>5. Build order</h2>
+  <p class="mut"><b>Terminology (matches the roadmap):</b> the build splits into two <b>Phases</b> —
+     <i>Phase 1 — MVP</i> and <i>Phase 2 — Post-MVP</i>. In Phase 1 each <b>subsystem = one Epic</b>
+     (Adapters, Harness, Soul, Tools/Plugins, Orchestrator). Phase 2's "Management" is not one Epic — it
+     <b>decomposes into several small Epics</b> (Agent / Tool / Plugin / Identity Management, Multi-Account,
+     AgentPool &amp; Fallback, Persistence). Each Epic's capabilities are its <b>Features</b>.</p>
+  <p class="mut">Each subsystem ships something real <b>and</b> passes its step-function proof before the next begins.</p>
+  <table>
+    <tr><th>#</th><th>Subsystem</th><th>What it is</th><th>Proof-of-function scenario</th></tr>
+    <tr><td>1</td><td><b>Adapters</b></td>
+      <td>codex + claude + agy bridges behind one <code>AgentAdapter</code>; normalized <code>WorkerEvent</code> stream; error classification (limit/transport vs terminal). Pure bridges — no resilience (Decision A).</td>
+      <td>Run a task through <i>each</i> CLI; kill one mid-run / hit a limit → the step shows Failed with a clear reason, not a stall.</td></tr>
+    <tr><td>2</td><td><b>Harness</b></td>
+      <td>control layer (observability, verification gate, guardrails, caps) <b>plus the step-function panel itself</b>.</td>
+      <td>A task runs; the panel renders every step green; the verification gate turns a <i>fake</i> "done" red.</td></tr>
+    <tr><td>3</td><td><b>Soul</b></td>
+      <td>role + methodology library (developer, reviewer, qa…) rendered into the agent's instruction channel.</td>
+      <td>Same task, two souls → visibly different step sequences; both green.</td></tr>
+    <tr><td>4</td><td><b>Tools / Plugins</b></td>
+      <td>catalog of third-party packs; end-user <b>Install</b> runs them into the CLIs; the harness <b>gates usage per task</b> (installed ≠ always on).</td>
+      <td>Install superpowers; task A (no tools) is <b>denied</b> it, task B (needs it) <b>uses</b> it — both visible.</td></tr>
+    <tr><td>5</td><td><b>Orchestrator</b></td>
+      <td>the biggest harness; wraps 1–4 into one complete extension.</td>
+      <td>An idea runs end-to-end through the panel = <b>MVP</b>.</td></tr>
+    <tr><td>6+</td><td><b>Management</b> <span class="mut">(Phase 2, several Epics)</span></td>
+      <td>Agent / Tool / Plugin / Identity Management (CRUD); Multi-Account; AgentPool &amp; Fallback (the automated form of P1, deferred here by Decision A); Persistence (durable runs across restarts).</td>
+      <td>—</td></tr>
+  </table>
+
+  <h2>6. The proof model (acceptance gate)</h2>
+  <p>Every pre-MVP subsystem defines one small <b>fixed scenario</b> as a step-function. "Done" means the
+     scenario runs against <b>real CLIs</b> and every step reaches a terminal state matching expectation —
+     green for success, or a <i>deliberately</i> red step where the design calls for it (e.g. the verification
+     gate rejecting a fake "done"). A hung or rate-limited run is <b>visibly</b> Failed, so "it silently
+     stopped, did it even work?" can no longer happen. The panel that proves the layer is the panel that ships.</p>
+
+  <h2>7. Key decisions</h2>
+  <div class="note"><b>Decision A — adapters are dumb bridges; resilience is deferred.</b>
+    Adapters carry <b>no</b> fallback/retry logic. In Phase 1 a provider limit is worked around <b>manually</b>.
+    Automated fallback (retry-next-adapter, later tier/round-robin AgentPool) lands with the Orchestrator /
+    Management. <b>Bought:</b> clean single-responsibility adapters. <b>Cost (on record):</b> the limit-block
+    pain is only manually mitigated until the Orchestrator — accepted. Adapters must still <b>classify</b>
+    errors so the later fallback layer has the signal it needs.</div>
+
+  <h2>8. Supersedes / prior docs</h2>
+  <ul>
+    <li><b>Supersedes</b> <code>.temp/2026-06-26-product-vision-design.md</code> and
+        <code>.temp/2026-06-26-worker-intro.html</code> (Codex-only-first).</li>
+    <li><b>Reframes</b> <code>.temp/agent-harness-common-functions.md</code> — its "Epic 2 shipped" baseline
+        was aspirational; its capability taxonomy stays a backlog map for subsystems 2 and 5–6.</li>
+    <li><b>Keeps</b> the existing webview skeleton + Tree primitives (the Tree is the future provider sidebar
+        for subsystem 6).</li>
+  </ul>
+
+  <h2>9. Out of scope</h2>
+  <p><span class="mut">Semantic auto-routing · cloud/remote execution · HTTP/cloud agents (CLI-only until after MVP)
+     · cross-user collaboration · cross-provider billing/cost optimization.</span></p>
+
+  <h2>10. Open questions</h2>
+  <ul>
+    <li><b>Adapter set for Phase 1</b> — codex verified (0.142.2); claude and agy unverified. Each adapter
+        spec starts with a real <code>--help</code>/run check before its plan.</li>
+    <li><b>Step-function granularity</b> — what counts as one "step" — settled in the Harness child spec.</li>
+    <li><b>Plugin install mechanics</b> — differs per CLI — settled in the Tools/Plugins child spec.</li>
+  </ul>
+
+  <footer>
+    Source of truth is the spec markdown; this is a rendered view for humans.
+    Detailed designs live in per-subsystem child specs · next is <b>Adapters</b>.
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skynet — Product Roadmap</title>
+<style>
+  :root{
+    --bg:#0e0e10; --panel:#161618; --panel-2:#1d1d20;
+    --text:#ececec; --muted:#9a9aa2; --line:#2a2a2e;
+    --open:#19c3c9; --dev:#9b6bff; --test:#f5a623; --ready:#37c871; --released:#ff4d8d;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:0 32px}
+  a{color:inherit}
+
+  /* ---- Hero ---- */
+  .hero{padding:88px 0 56px; border-bottom:1px solid var(--line)}
+  .hero h1{font-size:clamp(34px,5vw,56px); line-height:1.1; margin:0 0 32px; letter-spacing:-.02em}
+  .hero .intro{display:grid; grid-template-columns:1fr 1fr; gap:40px; max-width:920px}
+  .hero .intro p{margin:0; color:var(--muted); font-size:16px}
+
+  /* ---- Legend / filter ---- */
+  .legend{position:sticky; top:0; z-index:20; background:rgba(14,14,16,.85);
+    backdrop-filter:blur(10px); border-bottom:1px solid var(--line); padding:16px 0}
+  .legend .wrap{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+  .legend .label{color:var(--muted); font-size:13px; margin-right:6px}
+  .chip{display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+    border:1px solid var(--line); background:var(--panel); color:var(--text);
+    padding:6px 14px; border-radius:999px; font-size:13px; font-weight:500; transition:.15s}
+  .chip:hover{border-color:#3a3a40}
+  .chip .dot{width:9px; height:9px; border-radius:50%}
+  .chip[data-status="open"] .dot{background:var(--open)}
+  .chip[data-status="dev"] .dot{background:var(--dev)}
+  .chip[data-status="test"] .dot{background:var(--test)}
+  .chip[data-status="ready"] .dot{background:var(--ready)}
+  .chip[data-status="released"] .dot{background:var(--released)}
+  .chip.active{background:#fff; color:#0e0e10; border-color:#fff}
+  .chip.active .dot{box-shadow:0 0 0 2px rgba(0,0,0,.15)}
+  .chip.all{font-weight:600}
+
+  /* ---- Phase grouping header ---- */
+  .phase-head{display:flex; align-items:baseline; gap:14px; margin:0 0 22px}
+  .phase-head .ph-name{font-size:13px; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--text); background:var(--panel-2); border:1px solid var(--line);
+    padding:6px 14px; border-radius:999px}
+  .phase-head .ph-note{color:var(--muted); font-size:13px}
+  .phase-block{padding-top:8px}
+  .phase-block + .phase-block{margin-top:48px}
+
+  /* ---- Summary cards ---- */
+  .summary{padding:56px 0}
+  .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:20px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:24px}
+  .card .ep-eyebrow{color:var(--muted); font-size:11px; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; margin:0 0 8px}
+  .card h3{margin:0 0 16px; font-size:16px; letter-spacing:.01em}
+  .card ul{margin:0; padding:0; list-style:none}
+  .card li{color:var(--muted); font-size:14px; padding:7px 0; border-top:1px solid var(--line)}
+  .card li:first-child{border-top:0; padding-top:0}
+
+  /* ---- Detail sections ---- */
+  .section{padding:56px 0; border-top:1px solid var(--line)}
+  .section > .eyebrow{color:var(--muted); font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; margin:0 0 6px}
+  .section > h2{font-size:clamp(26px,3.4vw,40px); margin:0 0 12px; letter-spacing:-.015em}
+  .section > .lead{color:var(--muted); max-width:760px; margin:0 0 40px; font-size:16px}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:28px 56px}
+  .item{padding-bottom:4px}
+  .item .t{font-weight:600; font-size:15px; color:inherit;
+    text-decoration:underline; text-decoration-color:var(--muted);
+    text-underline-offset:3px; text-decoration-thickness:1px; transition:.15s}
+  .item .t::after{content:"\2197"; display:inline-block; margin-left:3px;
+    font-size:.85em; color:var(--muted); transition:.15s}
+  .item .t:hover{text-decoration-color:var(--text)}
+  .item .t:hover::after{color:var(--text); transform:translate(1px,-1px)}
+  .item .d{color:var(--muted); font-size:14px; margin:4px 0 10px}
+
+  /* ---- Status badge ---- */
+  .badge{display:inline-block; font-size:11px; font-weight:600; letter-spacing:.02em;
+    padding:3px 10px; border-radius:999px; color:#0e0e10; white-space:nowrap}
+  .badge.open{background:var(--open)}
+  .badge.dev{background:var(--dev); color:#fff}
+  .badge.test{background:var(--test)}
+  .badge.ready{background:var(--ready)}
+  .badge.released{background:var(--released); color:#fff}
+
+  /* ---- Filtering ---- */
+  .item.hide,.section.hide,.empty-note.hide{display:none}
+  .empty-note{padding:80px 0; text-align:center; color:var(--muted)}
+
+  footer{border-top:1px solid var(--line); padding:40px 0; color:var(--muted); font-size:13px}
+
+  @media(max-width:820px){
+    .hero .intro{grid-template-columns:1fr}
+    .cards{grid-template-columns:1fr}
+    .grid{grid-template-columns:1fr; gap:24px}
+    .wrap{padding:0 20px}
+  }
+</style>
+</head>
+<body>
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="wrap">
+      <h1>Skynet — Product Roadmap</h1>
+      <div class="intro">
+        <p>Three levels: <strong>Phases</strong> are the build stages (MVP, then Post-MVP); each <strong>Epic</strong> is a subsystem (a card below); each <strong>Feature</strong> is a capability inside an Epic, carrying a status badge. Skynet turns raw models into dependable Workers (Agent + Harness + Soul) and orchestrates them into a delivery team inside VSCode.</p>
+        <p>Two principles drive every layer: <strong>never blocked by one provider</strong> (multiple CLI adapters first) and <strong>every layer proves itself</strong> via a live step-function state machine. Use the legend to filter by status.</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- LEGEND / FILTER -->
+  <nav class="legend">
+    <div class="wrap">
+      <span class="label">Filter:</span>
+      <span class="chip all active" data-status="all">All</span>
+      <span class="chip" data-status="open"><span class="dot"></span>Open</span>
+      <span class="chip" data-status="dev"><span class="dot"></span>In development</span>
+      <span class="chip" data-status="test"><span class="dot"></span>In testing</span>
+      <span class="chip" data-status="ready"><span class="dot"></span>Ready</span>
+      <span class="chip" data-status="released"><span class="dot"></span>Released</span>
+    </div>
+  </nav>
+
+  <!-- SUMMARY CARDS — one card per EPIC, grouped under PHASE headers -->
+  <section class="summary">
+    <div class="wrap">
+
+      <div class="phase-block">
+        <div class="phase-head">
+          <span class="ph-name">Phase 1 — MVP</span>
+          <span class="ph-note">Five subsystems, each proving it works before the next is built.</span>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Adapters</h3>
+            <ul>
+              <li>Codex adapter</li>
+              <li>Claude Code adapter</li>
+              <li>Antigravity adapter</li>
+              <li>Normalized event stream</li>
+              <li>Error classification</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Harness</h3>
+            <ul>
+              <li>Step-function panel</li>
+              <li>Observability</li>
+              <li>Verification gate</li>
+              <li>Guardrails &amp; caps</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Soul</h3>
+            <ul>
+              <li>Soul library</li>
+              <li>Instruction-channel injection</li>
+              <li>Role picker</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Tools / Plugins</h3>
+            <ul>
+              <li>Plugin catalog</li>
+              <li>Install into CLIs</li>
+              <li>Per-task gating</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Orchestrator</h3>
+            <ul>
+              <li>Delivery state machine</li>
+              <li>Phase delegation</li>
+              <li>Idea to delivery run</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="phase-block">
+        <div class="phase-head">
+          <span class="ph-name">Phase 2 — Post-MVP</span>
+          <span class="ph-note">Management and resilience, once the MVP proves itself end-to-end.</span>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Agent Management</h3>
+            <ul>
+              <li>Agent CRUD</li>
+              <li>Auth flows</li>
+              <li>Secret storage</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Tool Management</h3>
+            <ul>
+              <li>Tool CRUD</li>
+              <li>Per-worker enable/disable</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Plugin Management</h3>
+            <ul>
+              <li>Plugin CRUD</li>
+              <li>Install / uninstall</li>
+              <li>Enable / disable</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Identity Management</h3>
+            <ul>
+              <li>Soul CRUD</li>
+              <li>Role mapping</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Multi-Account</h3>
+            <ul>
+              <li>Per-account config dirs</li>
+              <li>OAuth / PKCE / device flows</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>AgentPool &amp; Fallback</h3>
+            <ul>
+              <li>Tier tagging</li>
+              <li>Round-robin</li>
+              <li>Automated fallback</li>
+            </ul>
+          </div>
+          <div class="card">
+            <p class="ep-eyebrow">Epic</p>
+            <h3>Persistence</h3>
+            <ul>
+              <li>Durable run store</li>
+              <li>Resume after restart</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Adapters -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 1 — MVP · Epic</p>
+      <h2>Adapters</h2>
+      <p class="lead">Three CLI bridges built first so no single provider's limit can block downstream work. Pure single-responsibility bridges — resilience lives elsewhere.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Codex adapter</a>
+          <div class="d">openai x cli bridge: buildInvocation (argv/env) + parseEvents over real captured JSONL.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Claude Code adapter</a>
+          <div class="d">anthropic x cli bridge. Verify flags/auth/event shapes against the real CLI before planning.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Antigravity (agy) adapter</a>
+          <div class="d">google x cli bridge. Unconfirmed tool — real --help/run check is the first step of its plan.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Normalized WorkerEvent stream</a>
+          <div class="d">One typed, CLI-agnostic event shape (reasoning, tool-call/result, file-change, log, usage) across all adapters.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Error classification (limit/transport vs terminal)</a>
+          <div class="d">Each adapter classifies failures so the later fallback layer has a signal. No fallback logic in the adapter itself.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Harness -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 1 — MVP · Epic</p>
+      <h2>Harness</h2>
+      <p class="lead">The control layer plus the live step-function panel — the permanent feature that doubles as every layer's acceptance proof.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Step-function state-machine panel</a>
+          <div class="d">The permanent live panel: each step shows Success/Failed/Cancelled/In-Progress. Doubles as every layer's proof.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Observability</a>
+          <div class="d">Parse the full event stream (tool calls, logs, decisions) and render it into the panel.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Verification gate</a>
+          <div class="d">Lint/test/judge must pass before a run can claim done; a fake done turns the step red.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Guardrails &amp; caps</a>
+          <div class="d">Sandbox modes, step/token caps, wall-clock timeout, cancel.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Soul -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 1 — MVP · Epic</p>
+      <h2>Soul</h2>
+      <p class="lead">The identity layer that turns a raw agent into a worker with a role and a methodology.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Soul library (roles as data)</a>
+          <div class="d">developer/reviewer/qa souls: role + responsibilities + methodology, stored as data.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Verified instruction-channel injection</a>
+          <div class="d">Render a soul into each CLI's instruction channel (e.g. codex -c override vs temp AGENTS.md); confirm per CLI.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Role picker</a>
+          <div class="d">Pick the soul a task runs under; same task + different soul = visibly different behavior.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Tools / Plugins -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 1 — MVP · Epic</p>
+      <h2>Tools / Plugins</h2>
+      <p class="lead">A marketplace layer: catalog third-party packs, install them into the CLIs, and let the harness gate their usage per task.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Plugin catalog</a>
+          <div class="d">Register third-party packs (e.g. extensions-factory/superpowers) into a browsable catalog.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Install into CLIs</a>
+          <div class="d">End-user clicks Install; the pack is installed into codex/claude/agy so the agent can use it.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Per-task harness gating</a>
+          <div class="d">The harness denies installed tools/plugins to tasks that don't need them — installed is not always-on (least privilege).</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Orchestrator -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 1 — MVP · Epic</p>
+      <h2>Orchestrator</h2>
+      <p class="lead">The biggest harness — wraps all four subsystems into one complete extension. Reaching it end-to-end is the MVP.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Delivery state machine</a>
+          <div class="d">Native states (groom/spec/plan/build/review/verify/ship) wrapping the subsystems into one run.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Phase delegation to souls</a>
+          <div class="d">Each phase runs on a Worker wearing the right soul; mandatory review/verify gates before ship.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Idea to delivery run (= MVP)</a>
+          <div class="d">An idea runs end-to-end through the step-function panel and returns real output — the MVP bar.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Agent Management -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Agent Management</h2>
+      <p class="lead">Onboard and maintain the agents the user owns; the surface from the original vision's Agent Management.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Agent CRUD</a>
+          <div class="d">Create/edit/list/delete agents (Company x Protocol x AuthMethod x model).</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Auth flows</a>
+          <div class="d">Per-AuthMethod onboarding: apiKey, oauth2, oauth2Pkce, deviceCode, and CLI-login reference.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Secret storage + provider sidebar</a>
+          <div class="d">Secrets in VSCode SecretStorage (CLI logins referenced, not copied); the Tree-based provider sidebar lists agents + live status.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Tool Management -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Tool Management</h2>
+      <p class="lead">CRUD over the native tools Workers can call, and which Worker may use which.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Tool CRUD</a>
+          <div class="d">Create/edit/list/delete the native tools Workers can call.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Per-worker enable/disable</a>
+          <div class="d">Choose which tools each Worker/soul may use; feeds the harness per-task gate.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Plugin Management -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Plugin Management</h2>
+      <p class="lead">Manage the third-party plugin catalog and its installation across CLIs.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Plugin CRUD</a>
+          <div class="d">Manage catalog entries for third-party packs (add/edit/remove).</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Install / uninstall into CLIs</a>
+          <div class="d">Install and remove plugin packs across codex/claude/agy from the management UI.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Enable / disable</a>
+          <div class="d">Turn installed plugins on/off per Worker; feeds the harness per-task gate.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Identity Management -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Identity Management</h2>
+      <p class="lead">CRUD souls beyond the shipped library and map them to orchestrator roles.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Soul CRUD</a>
+          <div class="d">Create/edit/list/delete souls beyond the shipped library.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Role to soul mapping</a>
+          <div class="d">Map orchestrator roles (PM/Architect/Developer/Reviewer/QA) to chosen souls.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Multi-Account -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Multi-Account</h2>
+      <p class="lead">Run several agents inside one Company via isolated accounts.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Per-account config dirs</a>
+          <div class="d">Isolated config dirs (CODEX_HOME / CLAUDE_CONFIG_DIR / HOME) so one Company can host several agents.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">OAuth / PKCE / device flows</a>
+          <div class="d">Browser PKCE, token paste, and device-code flows per account.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — AgentPool & Fallback -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>AgentPool &amp; Fallback</h2>
+      <p class="lead">The automated resilience deferred from the adapters by Decision A — tiers, round-robin, fallback.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Tier tagging</a>
+          <div class="d">Tag each agent fast/balanced/deep; phases/souls declare a requiredTier.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Round-robin among peers</a>
+          <div class="d">Spread load and rate limits across same-tier agents in round-robin order.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Automated fallback (resolves Decision A)</a>
+          <div class="d">On a transport/limit failure, advance to remaining peers then the next-lower tier — the automated form of P1, deferred from the adapters by Decision A.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL SECTION — Persistence -->
+  <section class="section" data-section>
+    <div class="wrap">
+      <p class="eyebrow">Phase 2 — Post-MVP · Epic</p>
+      <h2>Persistence</h2>
+      <p class="lead">Durable runs that survive a VSCode restart and resume where they stopped.</p>
+      <div class="grid">
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Durable run store</a>
+          <div class="d">Persist Run objects (node, status, history, artifacts) to workspace storage.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Resume after restart</a>
+          <div class="d">Rehydrate a run after a VSCode restart and continue from the last node; re-surface any pending decision.</div>
+          <span class="badge open">Open</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><p class="empty-note hide" id="emptyNote">No items match this status.</p></div>
+
+  <footer>
+    <div class="wrap">Skynet roadmap · Phase &gt; Epic &gt; Feature · generated from <code>docs/superpowers/roadmap.json</code> · source of truth is the spec markdown.</div>
+  </footer>
+
+<script>
+  const chips = document.querySelectorAll('.chip');
+  const items = document.querySelectorAll('.item');
+  const sections = document.querySelectorAll('[data-section]');
+  const emptyNote = document.getElementById('emptyNote');
+
+  function apply(status){
+    items.forEach(i => i.classList.toggle('hide', status !== 'all' && i.dataset.status !== status));
+    let anyVisible = false;
+    sections.forEach(s => {
+      const visible = s.querySelectorAll('.item:not(.hide)').length > 0;
+      s.classList.toggle('hide', !visible);
+      if (visible) anyVisible = true;
+    });
+    emptyNote.classList.toggle('hide', anyVisible);
+  }
+
+  chips.forEach(chip => chip.addEventListener('click', () => {
+    chips.forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    apply(chip.dataset.status);
+  }));
+</script>
+</body>
+</html>
