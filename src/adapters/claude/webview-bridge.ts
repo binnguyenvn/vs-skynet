@@ -1,18 +1,18 @@
-import { runClaude, type ClaudeRun, type RunOpts } from "./claude-adapter";
-import type { ClaudeEvent } from "./events";
+import { runClaude, type ClaudeRunOpts } from "./claude-adapter";
+import type { RunOpts, WorkerEvent, WorkerRun } from "../types";
 import type { ExtensionToWebview } from "../../webview/protocol";
 
 interface LogWebview {
   postMessage(msg: ExtensionToWebview): boolean | PromiseLike<boolean>;
 }
 
-type ClaudeRunner = (opts: RunOpts) => ClaudeRun;
+type ClaudeRunner = (opts: ClaudeRunOpts) => WorkerRun;
 
 async function postLog(webview: LogWebview, level: "info" | "error", text: string): Promise<void> {
   await webview.postMessage({ type: "claudeLog", level, text });
 }
 
-function formatEvent(ev: ClaudeEvent): string | null {
+function formatEvent(ev: WorkerEvent): string | null {
   switch (ev.kind) {
     case "started":
       return `started session ${ev.sessionId} (${ev.model})`;
@@ -24,7 +24,7 @@ function formatEvent(ev: ClaudeEvent): string | null {
       return `tool ${ev.name}`;
     case "usage": {
       const cost = ev.costUsd === undefined ? "" : ` cost=$${ev.costUsd}`;
-      return `usage in=${ev.inputTokens} out=${ev.outputTokens} cacheW=${ev.cacheCreationInputTokens} cacheR=${ev.cacheReadInputTokens}${cost}`;
+      return `usage in=${ev.inputTokens} out=${ev.outputTokens} cacheW=${ev.cacheWriteTokens} cacheR=${ev.cachedInputTokens}${cost}`;
     }
     case "unknown":
       return null;

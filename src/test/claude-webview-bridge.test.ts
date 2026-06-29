@@ -1,19 +1,19 @@
 import * as assert from "assert";
 import { streamClaudeTestToWebview } from "../adapters/claude/webview-bridge";
-import type { ClaudeEvent, ClaudeResult } from "../adapters/claude/events";
+import type { WorkerEvent, WorkerResult } from "../adapters/types";
 import type { ExtensionToWebview } from "../webview/protocol";
 
 suite("streamClaudeTestToWebview", () => {
   test("posts claude events and final result as webview log messages", async () => {
     const posted: ExtensionToWebview[] = [];
-    const events: ClaudeEvent[] = [
+    const events: WorkerEvent[] = [
       { kind: "started", sessionId: "s1", model: "claude-x" },
       { kind: "thinking", text: "hmm" },
       { kind: "tool_call", name: "Bash", input: { cmd: "ls" } },
       { kind: "message", text: "pong" },
-      { kind: "usage", inputTokens: 10, outputTokens: 2, cacheCreationInputTokens: 0, cacheReadInputTokens: 5, costUsd: 0.01 },
+      { kind: "usage", inputTokens: 10, outputTokens: 2, cacheWriteTokens: 0, cachedInputTokens: 5, costUsd: 0.01 },
     ];
-    const result: ClaudeResult = { status: "success", lastMessage: "pong" };
+    const result: WorkerResult = { status: "success", lastMessage: "pong" };
 
     await streamClaudeTestToWebview(
       {

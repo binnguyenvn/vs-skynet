@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "os";
 import * as path from "node:path";
 import { runClaude } from "../adapters/claude/claude-adapter";
-import type { ClaudeEvent } from "../adapters/claude/events";
+import type { WorkerEvent } from "../adapters/types";
 
 async function withFakeClaude(script: string, fn: () => Promise<void>): Promise<void> {
   const binDir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-claude-"));
@@ -43,7 +43,7 @@ suite("claude adapter (fake CLI)", () => {
   test("happy: init+text+result -> success, message + started + usage(cost), hook noise skipped", async () => {
     await withFakeClaude(HAPPY, async () => {
       const run = runClaude({ prompt: "ignored", cwd: os.tmpdir() });
-      const events: ClaudeEvent[] = [];
+      const events: WorkerEvent[] = [];
       for await (const ev of run) {
         events.push(ev);
       }
@@ -120,7 +120,7 @@ describe("claude adapter (real CLI, slow — set CLAUDE_E2E=1)", function () {
 
   test("happy path: reply pong -> success", async () => {
     const run = runClaude({ prompt: "Reply with exactly the word: pong", cwd: os.tmpdir() });
-    const events: ClaudeEvent[] = [];
+    const events: WorkerEvent[] = [];
     for await (const ev of run) {
       events.push(ev);
     }

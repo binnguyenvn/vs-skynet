@@ -1,28 +1,15 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
-import { classifyError } from "./classify";
-import { mapClaudeLine, type ClaudeEvent, type ClaudeResult, type ClaudeUsage } from "./events";
+import { classifyError } from "../classify";
+import { mapClaudeLine } from "./events";
+import type { AgentAdapter, RunOpts, WorkerEvent, WorkerResult, WorkerRun, WorkerUsage } from "../types";
 
-export interface RunOpts {
-  prompt: string;
-  cwd: string;
-  model?: string;
+export interface ClaudeRunOpts extends RunOpts {
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions";
   allowedTools?: string[];
-  configDir?: string; // → CLAUDE_CONFIG_DIR, isolates auth/config per account
-  oauthToken?: string; // → CLAUDE_CODE_OAUTH_TOKEN
 }
 
-/**
- * Async iterator is single-consumer: create one `for await` loop per run.
- * Concurrent iteration shares one internal event queue and is not supported.
- */
-export interface ClaudeRun extends AsyncIterable<ClaudeEvent> {
-  cancel(): void;
-  result: Promise<ClaudeResult>;
-}
-
-export function runClaude(opts: RunOpts): ClaudeRun {
+export function runClaude(opts: ClaudeRunOpts): WorkerRun {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.model) {
     args.push("--model", opts.model);
@@ -49,15 +36,15 @@ export function runClaude(opts: RunOpts): ClaudeRun {
   });
 
   let cancelled = false;
-  let usage: ClaudeUsage | undefined;
+  let usage: WorkerUsage | undefined;
   let lastMessage: string | undefined;
   let resultObj: any | undefined;
 
-  const queue: ClaudeEvent[] = [];
-  let resolveNext: ((r: IteratorResult<ClaudeEvent>) => void) | null = null;
+  const queue: WorkerEvent[] = [];
+  let resolveNext: ((r: IteratorResult<WorkerEvent>) => void) | null = null;
   let finished = false;
 
-  const emit = (ev: ClaudeEvent) => {
+  const emit = (ev: WorkerEvent) => {
     if (ev.kind === "usage") {
       usage = ev;
     }
@@ -78,7 +65,7 @@ export function runClaude(opts: RunOpts): ClaudeRun {
     if (resolveNext) {
       const r = resolveNext;
       resolveNext = null;
-      r({ value: undefined as unknown as ClaudeEvent, done: true });
+      r({ value: undefined as unknown as WorkerEvent, done: true });
     }
   };
 
@@ -103,7 +90,7 @@ export function runClaude(opts: RunOpts): ClaudeRun {
   });
 
   let settled = false;
-  const result = new Promise<ClaudeResult>((resolve) => {
+  const result = new Promise<WorkerResult>((resolve) => {
     const settle = (exitCode: number | null) => {
       if (settled) {
         return;
@@ -135,13 +122,13 @@ export function runClaude(opts: RunOpts): ClaudeRun {
     child.on("close", (code) => settle(code));
   });
 
-  const iterator: AsyncIterator<ClaudeEvent> = {
+  const iterator: AsyncIterator<WorkerEvent> = {
     next() {
       if (queue.length) {
         return Promise.resolve({ value: queue.shift()!, done: false });
       }
       if (finished) {
-        return Promise.resolve({ value: undefined as unknown as ClaudeEvent, done: true });
+        return Promise.resolve({ value: undefined as unknown as WorkerEvent, done: true });
       }
       return new Promise((r) => {
         resolveNext = r;
@@ -160,3 +147,8 @@ export function runClaude(opts: RunOpts): ClaudeRun {
     },
   };
 }
+
+export const claudeAdapter: AgentAdapter = {
+  id: "claude",
+  run: (opts) => runClaude(opts),
+};
