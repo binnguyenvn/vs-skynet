@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code (claude) Adapter — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  .us{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--pur);
+    border-radius:8px;padding:10px 16px;margin:28px 0 8px}
+  .us h2{border:0;margin:0;font-size:19px}
+  .files{font-size:13px;color:var(--mut);margin:6px 0 0}
+  ul.check{list-style:none;padding-left:4px}
+  ul.check li{margin:5px 0;padding-left:26px;position:relative}
+  ul.check li::before{content:"\2610";position:absolute;left:0;color:var(--acc);font-size:16px;top:-1px}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Claude Code (claude) Adapter <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">2026-06-29 · spec: <code>2026-06-29-claude-adapter-design.md</code> · mirrors codex adapter</p>
+  <div class="tags">
+    <span class="tag">Phase 1 — MVP</span>
+    <span class="tag">5 tasks · 2 user stories</span>
+    <span class="tag">TDD · frequent commits</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A standalone, concrete TypeScript adapter that runs a task through the Claude Code CLI
+  (<code>claude -p --output-format stream-json</code>) and turns its JSONL output into a typed, observable event stream
+  with a clear terminal status, plus a manual webview smoke UI to prove it. New code lives in
+  <code>src/adapters/claude/</code>, mirroring <code>src/adapters/codex/</code> and <code>src/adapters/agy/</code>.</p>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li><strong>Verified:</strong> <code>claude 2.1.195</code>. Invocation:
+    <code>claude -p "&lt;prompt&gt;" --output-format stream-json --verbose [--model m] --permission-mode &lt;mode&gt; [--allowedTools …] --add-dir &lt;cwd&gt;</code>.</li>
+    <li><code>--verbose</code> required for the full event stream under <code>-p</code>. Prompt is positional, right after
+    <code>-p</code> (before the variadic flags). stdin <code>'ignore'</code>; cwd via spawn option + <code>--add-dir</code>.</li>
+    <li><strong>Permission default <code>'default'</code></strong> — tools denied (no approver under <code>-p</code>), the
+    safe read-only-equivalent. Opt in to tool work via <code>permissionMode</code> / <code>allowedTools</code>.</li>
+    <li>Tests in <code>src/test/</code>, run with <code>npm test</code>. Real-CLI test gated behind <code>CLAUDE_E2E</code>.</li>
+  </ul>
+  <div class="note warn"><strong>GOTCHA — success ≠ subtype.</strong> Success requires <code>exitCode === 0</code> AND a
+  <code>result</code> event with <code>is_error === false</code>. An observed run returned <code>subtype:"success"</code>
+  with <code>is_error:true</code> ("Not logged in"). Gate on <code>is_error</code>, never <code>subtype</code>.</div>
+  <div class="note"><strong>3rd <code>classifyError</code> consumer.</strong> Copied verbatim from codex; classifies on
+  <code>result.result</code> text AND stderr (claude reports failures in the structured result field). Strongest trigger
+  yet to extract a shared classifier — but that extraction stays its own US.</div>
+
+  <div class="us"><h2>US-1: Claude Code adapter</h2>
+  <p class="mut">A working, tested <code>runClaude(opts)</code> that streams typed events and resolves a terminal
+  <code>ClaudeResult</code>. Proven via fake-CLI fast tests + a gated real-CLI test. No UI required.</p></div>
+
+  <h3>Task 1 — Event types + JSONL line mapper</h3>
+  <p class="files">Create <code>src/adapters/claude/events.ts</code> · Test <code>src/test/claude-events.test.ts</code></p>
+  <ul class="check">
+    <li>Write <code>mapClaudeLine</code> tests: <code>system/init</code>→<code>[started]</code>; hook noise→<code>[unknown]</code>;
+    <code>assistant</code> fans out to <code>[message, thinking, tool_call, usage]</code>; <code>result</code>→<code>[usage incl. cost]</code>; unknown type / block→<code>[unknown]</code>.</li>
+    <li>Run, watch it fail (missing module).</li>
+    <li>Implement <code>ClaudeUsage</code>/<code>ClaudeEvent</code>/<code>ClaudeResult</code> + <code>mapClaudeLine(obj): ClaudeEvent[]</code>
+    (takes a parsed object, fans out an array — the one divergence from codex/agy's single-or-null mapper).</li>
+    <li>Run tests green. Commit.</li>
+  </ul>
+
+  <h3>Task 2 — Error classifier</h3>
+  <p class="files">Create <code>src/adapters/claude/classify.ts</code> · Test <code>src/test/claude-classify.test.ts</code></p>
+  <ul class="check">
+    <li>Write tests: 429/quota→<code>limit</code>; econn/timeout→<code>transport</code>; "Not logged in"/empty→<code>terminal</code>.</li>
+    <li>Run, watch it fail.</li>
+    <li>Copy <code>classify.ts</code> verbatim from codex (with the 3rd-consumer <code>ponytail:</code> note).</li>
+    <li>Run tests green. Commit.</li>
+  </ul>
+
+  <h3>Task 3 — <code>runClaude</code> adapter + fake-CLI &amp; real-CLI proof</h3>
+  <p class="files">Create <code>src/adapters/claude/claude-adapter.ts</code> · Test <code>src/test/claude-adapter.integration.test.ts</code></p>
+  <ul class="check">
+    <li>Write fake-CLI tests (fake <code>claude</code> on <code>PATH</code> emitting stream-json): happy→success (started+message+usage(cost), hook noise→unknown); <strong>exit 0 + is_error:true→failed/terminal</strong>; 429 result→failed/limit; argv order (<code>-p</code> then prompt).</li>
+    <li>Write gated real-CLI tests (<code>CLAUDE_E2E=1</code>): happy "reply pong"→success; cancel mid-run→cancelled.</li>
+    <li>Run, watch it fail (missing module).</li>
+    <li>Implement <code>runClaude</code>: spawn argv, line handler parses JSON once, captures the <code>result</code> object, emits each event from the <code>mapClaudeLine</code> array. Success = exit 0 AND <code>resultObj.is_error === false</code>; else classify on <code>result.result</code>+stderr. Async-iterator plumbing copied from codex.</li>
+    <li>Run fast tests green; real-CLI suite skipped. Run <code>CLAUDE_E2E=1 npm test</code> for the real proof. Commit.</li>
+  </ul>
+
+  <div class="us"><h2>US-2: Test Claude webview smoke UI</h2>
+  <p class="mut">A manual <strong>Test Claude</strong> button + <strong>Claude log</strong> panel in the existing
+  <code>hello</code> webview that streams a real <code>runClaude</code> run. Vertical slice across protocol, host bridge,
+  extension handler, and React view.</p></div>
+
+  <h3>Task 4 — Protocol messages + webview bridge</h3>
+  <p class="files">Modify <code>src/webview/protocol.ts</code> · Create <code>src/adapters/claude/webview-bridge.ts</code> · Test <code>src/test/claude-webview-bridge.test.ts</code></p>
+  <ul class="check">
+    <li>Add <code>{type:"testClaude"}</code> and <code>{type:"claudeLog",level,text}</code> to the protocol.</li>
+    <li>Write a fake-<code>ClaudeRun</code> bridge test asserting the exact posted log lines (started/thinking/tool/message/usage/done).</li>
+    <li>Run, watch it fail. Implement <code>streamClaudeTestToWebview</code> + <code>formatEvent</code> (mirrors codex bridge).</li>
+    <li>Run tests green. Commit.</li>
+  </ul>
+
+  <h3>Task 5 — Wire the Test Claude button</h3>
+  <p class="files">Modify <code>src/webview/panel.ts</code> · Modify <code>src/integration/hello.tsx</code></p>
+  <ul class="check">
+    <li>Handle <code>testClaude</code> in the host (alongside testCodex/testAgy).</li>
+    <li>Add claude state, <code>claudeLog</code> handling, a Test Claude button, and a Claude log panel in <code>HelloView</code>.</li>
+    <li>Run full suite green (<code>pretest</code> = compile-tests + compile + lint).</li>
+    <li>Manual smoke: F5, open webview, click Test Claude → log streams to <code>done success</code>. Commit.</li>
+  </ul>
+
+  <h2>Out of scope (documented in spec)</h2>
+  <p>Shared <code>AgentAdapter</code>/<code>WorkerEvent</code>, shared-classifier extraction, fallback/retry, the full
+  step-function panel, multi-turn/resume (<code>--resume</code>/<code>--continue</code>), <code>--json-schema</code>
+  structured output, <code>--input-format stream-json</code>, images, soul injection.</p>
+
+  <footer>Skynet — Harness Engineering · Claude Code (claude) adapter implementation plan</footer>
+</div>
+</body>
+</html>
