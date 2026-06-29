@@ -1,26 +1,14 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
-import { classifyError } from "./classify";
-import { mapCodexLine, type CodexEvent, type CodexResult, type CodexUsage } from "./events";
+import { classifyError } from "../classify";
+import { mapCodexLine } from "./events";
+import type { AgentAdapter, RunOpts, WorkerEvent, WorkerResult, WorkerRun, WorkerUsage } from "../types";
 
-export interface RunOpts {
-  prompt: string;
-  cwd: string;
-  model?: string;
+export interface CodexRunOpts extends RunOpts {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
-  configDir?: string; // → CODEX_HOME, isolates auth/config per account
 }
 
-/**
- * Async iterator is single-consumer: create one `for await` loop per run.
- * Concurrent iteration shares one internal event queue and is not supported.
- */
-export interface CodexRun extends AsyncIterable<CodexEvent> {
-  cancel(): void;
-  result: Promise<CodexResult>;
-}
-
-export function runCodex(opts: RunOpts): CodexRun {
+export function runCodex(opts: CodexRunOpts): WorkerRun {
   const args = [
     "exec", "--json", "--skip-git-repo-check",
     "-s", opts.sandbox ?? "read-only",
@@ -43,16 +31,16 @@ export function runCodex(opts: RunOpts): CodexRun {
   });
 
   let cancelled = false;
-  let usage: CodexUsage | undefined;
+  let usage: WorkerUsage | undefined;
   let lastMessage: string | undefined;
   let sawTurn = false;
 
   // Bridge readline 'line' / process 'close' callbacks to an async iterator.
-  const queue: CodexEvent[] = [];
-  let resolveNext: ((r: IteratorResult<CodexEvent>) => void) | null = null;
+  const queue: WorkerEvent[] = [];
+  let resolveNext: ((r: IteratorResult<WorkerEvent>) => void) | null = null;
   let finished = false;
 
-  const emit = (ev: CodexEvent) => {
+  const emit = (ev: WorkerEvent) => {
     if (ev.kind === "usage") {
       usage = ev;
       sawTurn = true;
@@ -74,7 +62,7 @@ export function runCodex(opts: RunOpts): CodexRun {
     if (resolveNext) {
       const r = resolveNext;
       resolveNext = null;
-      r({ value: undefined as unknown as CodexEvent, done: true });
+      r({ value: undefined as unknown as WorkerEvent, done: true });
     }
   };
 
@@ -87,7 +75,7 @@ export function runCodex(opts: RunOpts): CodexRun {
   });
 
   let settled = false;
-  const result = new Promise<CodexResult>((resolve) => {
+  const result = new Promise<WorkerResult>((resolve) => {
     const settle = (exitCode: number | null) => {
       if (settled) {
         return;
@@ -119,13 +107,13 @@ export function runCodex(opts: RunOpts): CodexRun {
     child.on("close", (code) => settle(code));
   });
 
-  const iterator: AsyncIterator<CodexEvent> = {
+  const iterator: AsyncIterator<WorkerEvent> = {
     next() {
       if (queue.length) {
         return Promise.resolve({ value: queue.shift()!, done: false });
       }
       if (finished) {
-        return Promise.resolve({ value: undefined as unknown as CodexEvent, done: true });
+        return Promise.resolve({ value: undefined as unknown as WorkerEvent, done: true });
       }
       return new Promise((r) => {
         resolveNext = r;
@@ -144,3 +132,8 @@ export function runCodex(opts: RunOpts): CodexRun {
     },
   };
 }
+
+export const codexAdapter: AgentAdapter = {
+  id: "codex",
+  run: (opts) => runCodex(opts),
+};
