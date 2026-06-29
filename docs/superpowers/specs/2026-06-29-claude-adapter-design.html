@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code (claude) Adapter — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Claude Code (claude) Adapter <span class="mut">— Design</span></h1>
+  <p class="sub">2026-06-29 · Epic: Adapters (subsystem 1) · Feature/US: Claude Code adapter</p>
+  <div class="tags">
+    <span class="tag">Parent: skynet-vision</span>
+    <span class="tag">Mirrors: codex-adapter</span>
+    <span class="tag">Phase 1 — MVP</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A standalone, concrete bridge that runs a task through the <strong>Claude Code CLI (<code>claude</code>)</strong>
+  and turns its output into a typed, observable stream with a clear terminal status. Third adapter (after codex, agy),
+  built and proven on its own.</p>
+  <p><strong>Bottom-up by decision:</strong> still no shared <code>AgentAdapter</code> interface or normalized
+  <code>WorkerEvent</code> type. The adapter stays concrete and claude-specific. The genuine commonality across
+  codex + agy + claude (notably <code>classifyError</code>, now with a <strong>third</strong> consumer) is a strong
+  extraction trigger, but the extraction itself is a later US.</p>
+  <p>Scope is <strong>claude only</strong>, via its non-interactive <code>--print</code> (<code>-p</code>) mode with
+  <code>--output-format stream-json</code>. No fallback/retry (Decision A), no step-function panel (subsystem 2), no
+  shared types. A small webview smoke UI mirrors the codex/agy ones to manually prove the stream.</p>
+
+  <h2>Verified ground truth (real CLI)</h2>
+  <p><code>claude 2.1.195</code>. The adapter drives the non-interactive path:</p>
+  <pre>claude -p "&lt;prompt&gt;" --output-format stream-json --verbose --model &lt;model&gt; --add-dir &lt;cwd&gt;</pre>
+  <p><code>--output-format stream-json</code> prints events to stdout as JSONL. <code>--verbose</code> is
+  <strong>required</strong> to get the full event stream under <code>-p</code>. The child's <code>cwd</code> is set via
+  the spawn option; <code>--add-dir &lt;cwd&gt;</code> makes the workspace root explicit. A real
+  <code>"reply pong"</code>-style run emitted these event <code>type</code>s (one JSON object per line):</p>
+  <pre>{"type":"system","subtype":"init","session_id":"...","model":"...","tools":[...],"permissionMode":"default"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"pong"}],"usage":{"input_tokens":...,"output_tokens":...,"cache_creation_input_tokens":...,"cache_read_input_tokens":...}}}
+{"type":"result","subtype":"success","is_error":false,"result":"pong","total_cost_usd":0.01,"usage":{...}}</pre>
+  <div class="note good"><strong>Closest to codex</strong> (rich JSONL with usage + tool calls), unlike agy's plain-text
+  <code>--print</code>. In fact the <strong>richest of the three</strong>: <code>assistant</code> content blocks carry
+  real <code>text</code>, <code>thinking</code>, and <code>tool_use</code> blocks; usage carries cache-creation /
+  cache-read tokens; <code>result</code> carries <code>total_cost_usd</code>.</div>
+  <div class="note warn"><strong>Gotcha 1 — <code>result.subtype:"success"</code> lies.</strong> An observed run
+  returned <code>subtype:"success"</code> <strong>with</strong> <code>is_error:true</code> and
+  <code>result:"Not logged in · Please run /login"</code>. Terminal success MUST be gated on
+  <code>is_error === false</code>, <strong>not</strong> on <code>subtype</code>. (Codex keyed success off
+  <code>turn.completed</code>; agy off clean exit; claude off <code>is_error</code>.)</div>
+  <div class="note warn"><strong>Gotcha 2 — hooks pollute the stream.</strong> <code>SessionStart</code> hooks interleave
+  <code>system</code> events with <code>subtype:"hook_started"</code> / <code>"hook_response"</code> alongside the real
+  ones. The parser folds every unmodeled <code>system</code> subtype into <code>unknown{raw}</code> so hook noise never
+  crashes it.</div>
+  <p><strong>Run strategy chosen:</strong> spawn <code>claude -p --output-format stream-json</code> and parse JSONL.
+  Rejected — interactive mode (needs a TTY), <code>--output-format text</code> (loses events/usage/tool calls), and the
+  Agent SDK (heavier, not needed for Phase 1).</p>
+
+  <h2>Public shape (concrete, claude-specific)</h2>
+  <p>Core adapter code lives in <code>src/adapters/claude/</code>, mirroring <code>src/adapters/codex/</code> and
+  <code>src/adapters/agy/</code>. Per the approved scope, the event type models the <strong>full rich set</strong> —
+  <code>thinking</code> and <code>tool_call</code> are <strong>REAL</strong> here (claude actually emits them), not
+  stubs like agy's.</p>
+  <pre>interface ClaudeUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  costUsd?: number;            // from result.total_cost_usd (only on the result event)
+}
+
+type ClaudeEvent =
+  | { kind: 'started'; sessionId: string; model: string }   // system/init
+  | { kind: 'message'; text: string }                        // assistant text block
+  | { kind: 'thinking'; text: string }                       // assistant thinking block (REAL)
+  | { kind: 'tool_call'; name: string; input: unknown }      // assistant tool_use block (REAL)
+  | ({ kind: 'usage' } &amp; ClaudeUsage)                        // assistant/result usage
+  | { kind: 'unknown'; raw: unknown };                       // system/hook_*, future events
+
+interface ClaudeResult {
+  status: 'success' | 'failed' | 'cancelled';
+  reason?: string;            // human-readable on failed/cancelled (e.g. result.result text)
+  errorClass?: 'limit' | 'transport' | 'terminal';   // set when status==='failed'
+  usage?: ClaudeUsage;        // last/aggregate usage incl. cost
+  lastMessage?: string;       // last assistant text (or result.result)
+}
+
+interface RunOpts {
+  prompt: string;
+  cwd: string;
+  model?: string;
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions'; // default 'default'
+  allowedTools?: string[];    // optional → passes --allowedTools
+}
+
+interface ClaudeRun extends AsyncIterable&lt;ClaudeEvent&gt; {
+  cancel(): void;             // kills the child; result resolves status:'cancelled'
+  result: Promise&lt;ClaudeResult&gt;;
+}
+
+function runClaude(opts: RunOpts): ClaudeRun;</pre>
+  <p><code>unknown{raw}</code> keeps the adapter forward-compatible (hook events, new event types). The async-iterator
+  plumbing (queue + <code>resolveNext</code> + <code>finishIter</code>) is copied from <code>codex-adapter.ts</code> /
+  <code>agy-adapter.ts</code> verbatim — single-consumer, one <code>for await</code> per run.</p>
+  <div class="note"><strong>Permission default — chosen, not asked.</strong> <code>permissionMode</code> defaults to
+  <code>'default'</code>. Under <code>-p</code> there is no one to approve tool prompts, so tool requests are denied and
+  the agent continues — the safe read-only-equivalent that mirrors codex's <code>read-only</code> sandbox default.
+  Callers that need real tool work pass <code>'acceptEdits'</code>/<code>'bypassPermissions'</code> (and optionally
+  <code>allowedTools</code>). The adapter does not pass <code>--dangerously-skip-permissions</code> by default.</div>
+
+  <h2>Webview smoke UI</h2>
+  <p>The existing <code>hello</code> webview gains a manual <strong>Test Claude</strong> button and a small
+  <code>Claude log</code> panel, alongside (not replacing) the codex and agy ones. Developer-facing smoke test, not a
+  production worker panel.</p>
+  <p>Message flow (mirrors codex/agy):</p>
+  <ol>
+    <li>Webview sends <code>{ type: "testClaude" }</code>.</li>
+    <li>Extension host handles it in <code>openWebview</code>, runs <code>streamClaudeTestToWebview(webview, cwd)</code>.</li>
+    <li>The bridge calls <code>runClaude({ prompt: "Reply with exactly the word: pong", cwd })</code>.</li>
+    <li>Each <code>ClaudeEvent</code> is formatted to <code>{ type: "claudeLog", level, text }</code> and posted back.</li>
+    <li><code>HelloView</code> appends each line to the <code>Claude log</code> panel and disables the button while the run is active.</li>
+  </ol>
+  <p>The bridge is tiny and tested with a fake <code>ClaudeRun</code>, so <code>npm test</code> never invokes the real
+  CLI or consumes quota.</p>
+
+  <h2>Data flow</h2>
+  <ol>
+    <li><code>runClaude</code> spawns the child with the argv above, <code>{ cwd: opts.cwd, stdio: ['ignore','pipe','pipe'] }</code>.
+    stdin <code>'ignore'</code> mirrors the codex/agy anti-block discipline.</li>
+    <li>stdout is split on newlines via <code>readline</code>; each non-empty line is <code>JSON.parse</code>d and mapped
+    by <code>mapClaudeLine</code>; yielded events flow from the async iterator as they arrive.</li>
+    <li>stderr is buffered (used only for error classification).</li>
+    <li>On child <code>exit</code>/<code>error</code> the <code>result</code> promise resolves. The <code>result</code>
+    event captured during the stream supplies <code>is_error</code>, <code>lastMessage</code>, final <code>usage</code>,
+    and <code>costUsd</code>.</li>
+  </ol>
+  <h3><code>mapClaudeLine</code> — codex-shaped</h3>
+  <pre>// Map one claude stream-json line to zero-or-more ClaudeEvents.
+// An `assistant` line fans out: one event per content block + a usage event.
+function mapClaudeLine(obj: any): ClaudeEvent[] {
+  switch (obj?.type) {
+    case 'system':
+      if (obj.subtype === 'init')
+        return [{ kind: 'started', sessionId: String(obj.session_id ?? ''), model: String(obj.model ?? '') }];
+      return [{ kind: 'unknown', raw: obj }];   // hook_started / hook_response / future subtypes
+    case 'assistant': {
+      const out: ClaudeEvent[] = [];
+      for (const b of obj.message?.content ?? []) {
+        if (b.type === 'text')     out.push({ kind: 'message', text: String(b.text ?? '') });
+        else if (b.type === 'thinking') out.push({ kind: 'thinking', text: String(b.thinking ?? b.text ?? '') });
+        else if (b.type === 'tool_use') out.push({ kind: 'tool_call', name: String(b.name ?? ''), input: b.input });
+        else out.push({ kind: 'unknown', raw: b });
+      }
+      const u = obj.message?.usage;
+      if (u) out.push({ kind: 'usage', ...toUsage(u) });
+      return out;
+    }
+    case 'result':
+      return obj.usage ? [{ kind: 'usage', ...toUsage(obj.usage), costUsd: obj.total_cost_usd }] : [];
+    default:
+      return [{ kind: 'unknown', raw: obj }];
+  }
+}</pre>
+
+  <h2>Status rules</h2>
+  <table>
+    <tr><th>Condition</th><th>status</th><th>errorClass</th></tr>
+    <tr><td><code>.cancel()</code> was called</td><td><code>cancelled</code></td><td>—</td></tr>
+    <tr><td>exit 0 <strong>and</strong> a <code>result</code> event with <code>is_error === false</code></td><td><code>success</code></td><td>—</td></tr>
+    <tr><td>exit ≠ 0, <strong>or</strong> <code>result.is_error === true</code>, <strong>or</strong> no <code>result</code> event</td><td><code>failed</code></td><td>classify</td></tr>
+  </table>
+  <pre>// ponytail: success requires is_error===false, NOT result.subtype==='success'.
+// A real run returned subtype:'success' with is_error:true ("Not logged in").
+// subtype is unreliable; is_error is the truth.</pre>
+
+  <h2>Error classification (heuristic — Phase-1 requirement)</h2>
+  <p><code>classifyError(input) -&gt; 'limit' | 'transport' | 'terminal'</code> reuses the codex regexes (rate-limit/429
+  → <code>limit</code>; network/timeout/dns → <code>transport</code>; else <code>terminal</code>). Unlike codex/agy it
+  classifies against <strong>both</strong> <code>result.result</code> text <strong>and</strong> stderr, because claude
+  reports failures in the structured <code>result.result</code> field (e.g. <code>"Not logged in"</code> →
+  <code>terminal</code>), not only on stderr. The adapter does <strong>no</strong> retry.</p>
+  <div class="note warn"><code>classify.ts</code> is now duplicated across codex + agy + claude. <strong>THREE
+  consumers</strong> — the strongest trigger yet to extract a shared classifier in the "Error classification" US. Not
+  extracted here to keep this adapter standalone. The heuristic patterns remain unverified against real claude
+  limit/transport output; refine the first time real failure output is captured.</div>
+
+  <h2>Proof of function (acceptance gate)</h2>
+  <ul>
+    <li><strong>happy</strong> <em>(real claude, slow/uses quota)</em>: <code>runClaude({prompt:"reply pong", ...})</code>
+    → events include a <code>message</code> whose text contains <code>pong</code>, <code>result.status==='success'</code>,
+    <code>result.usage</code> present.</li>
+    <li><strong>cancel</strong> <em>(real claude, slow)</em>: start a longer task, call <code>.cancel()</code> mid-run →
+    <code>result.status==='cancelled'</code>.</li>
+    <li><strong>classify</strong> <em>(pure, fast)</em>: <code>classifyError</code> returns
+    <code>limit</code>/<code>transport</code>/<code>terminal</code> for representative stderr/result strings.</li>
+    <li><strong>mapClaudeLine</strong> <em>(pure, fast)</em>: <code>system/init</code>→<code>started</code>; an
+    <code>assistant</code> line with text+thinking+tool_use blocks → the matching
+    <code>message</code>/<code>thinking</code>/<code>tool_call</code> events + a <code>usage</code> event;
+    <code>system/hook_*</code>→<code>unknown</code>; a <code>result</code> with <code>is_error:true</code> → drives a
+    <code>failed</code> status.</li>
+    <li><strong>webview smoke bridge</strong> <em>(pure/fake, fast)</em>: <code>streamClaudeTestToWebview</code> posts a
+    <code>Starting Claude test...</code> line, formatted event lines, and a final <code>done success</code>/error line.</li>
+  </ul>
+  <p class="mut">Real-CLI tests are marked slow and may consume claude quota.</p>
+
+  <h2>Out of scope</h2>
+  <ul>
+    <li>Shared <code>AgentAdapter</code> interface / normalized <code>WorkerEvent</code> (later US).</li>
+    <li>Shared <code>classifyError</code> extraction (its own US; this adapter is the strongest trigger).</li>
+    <li>Fallback/retry/AgentPool (Decision A — Orchestrator/Phase 2).</li>
+    <li>Full step-function panel and observability (subsystem 2).</li>
+    <li>Multi-turn/resume (<code>--resume</code>/<code>--continue</code>), <code>--json-schema</code> structured output,
+    <code>--input-format stream-json</code>, images, soul injection.</li>
+  </ul>
+
+  <footer>Skynet — Harness Engineering · Claude Code (claude) adapter design · mirrors the codex adapter</footer>
+</div>
+</body>
+</html>

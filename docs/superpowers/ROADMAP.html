@@ -275,8 +275,8 @@
           <span class="badge released">Released</span>
         </div>
         <div class="item" data-status="open">
-          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Claude Code adapter</a>
-          <div class="d">anthropic x cli bridge. Verify flags/auth/event shapes against the real CLI before planning.</div>
+          <a href="specs/2026-06-29-claude-adapter-design.md" class="t">Claude Code adapter</a>
+          <div class="d">anthropic x cli bridge. Verified claude 2.1.195: spawn claude -p --output-format stream-json --verbose, parse JSONL into the richest event set of the three (real text/thinking/tool_use + cache-token usage + cost). Success gated on result.is_error===false (subtype lies); skips hook noise. Mirrors codex; 3rd classifyError consumer.</div>
           <span class="badge open">Open</span>
         </div>
         <div class="item" data-status="open">
