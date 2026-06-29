@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antigravity (agy) Adapter — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:26px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  .us{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--pur);
+    border-radius:8px;padding:10px 16px;margin:28px 0 8px}
+  .us h2{border:0;margin:0;font-size:19px}
+  .files{font-size:13px;color:var(--mut);margin:6px 0 0}
+  ul.check{list-style:none;padding-left:4px}
+  ul.check li{margin:5px 0;padding-left:26px;position:relative}
+  ul.check li::before{content:"\2610";position:absolute;left:0;color:var(--acc);font-size:16px;top:-1px}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Antigravity (agy) Adapter <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">2026-06-29 · spec: <code>2026-06-29-antigravity-adapter-design.md</code> · mirrors codex adapter</p>
+  <div class="tags">
+    <span class="tag">Epic: Adapters</span>
+    <span class="tag">TDD</span>
+    <span class="tag">2 User Stories · 5 Tasks</span>
+  </div>
+
+  <div class="note"><strong>For agentic workers:</strong> use <code>superpowers:subagent-driven-development</code>
+  (recommended) or <code>superpowers:executing-plans</code> to implement task-by-task.</div>
+
+  <h2>Goal</h2>
+  <p>A standalone TypeScript adapter that runs a task through <code>agy --print</code> and turns its plain-text output
+  into a typed, observable event stream with a clear terminal status, plus a manual webview smoke UI.</p>
+
+  <h2>Architecture</h2>
+  <p>Mirror <code>src/adapters/codex/</code> in a new <code>src/adapters/agy/</code>: <code>events.ts</code>,
+  <code>classify.ts</code> (copied verbatim from codex), <code>agy-adapter.ts</code> (<code>runAgy</code>),
+  <code>webview-bridge.ts</code>. <code>--print</code> emits plain text only, so the event type carries the full
+  target shape (<code>started</code>/<code>thought</code>/<code>tool_call</code>/<code>usage</code>) but only
+  <code>message</code> is populated today; the rest are forward-compat stubs for a future Python-SDK sidecar.</p>
+
+  <h2>Global Constraints</h2>
+  <ul>
+    <li>Verified <code>agy 1.0.13</code>: <code>agy --print [--dangerously-skip-permissions] [--sandbox] [--model &lt;m&gt;] --add-dir &lt;cwd&gt; "&lt;prompt&gt;"</code>. Plain markdown on stdout, exit 0 on success. No <code>--json</code>/usage/threadId/events.</li>
+    <li><code>--dangerously-skip-permissions</code> mandatory headless; <code>--sandbox</code> restricts FS. Both default <strong>on</strong>.</li>
+    <li>No <code>-C</code> flag → set child <code>cwd</code> via spawn + pass <code>--add-dir &lt;cwd&gt;</code>. stdin <code>'ignore'</code>.</li>
+    <li>No shared types; <code>classifyError</code> copied verbatim from codex (extraction trigger noted, not done here).</li>
+    <li>Success = clean exit (0); <code>usage</code> always <code>undefined</code> today.</li>
+    <li>Tests in <code>src/test/</code>, run with <code>npm test</code>; real-CLI test gated behind <code>AGY_E2E</code>.</li>
+  </ul>
+
+  <div class="us">
+    <h2>US-1: Antigravity adapter</h2>
+    <p class="mut">A working, tested <code>runAgy(opts)</code> that streams typed events and resolves a terminal
+    <code>AgyResult</code>. Usable end-to-end via tests; no UI required.</p>
+  </div>
+
+  <h3>Task 1: Event types + stdout line parser</h3>
+  <p class="files">Create <code>src/adapters/agy/events.ts</code> · Test <code>src/test/agy-events.test.ts</code></p>
+  <ul class="check">
+    <li>Write the failing <code>mapAgyLine</code> test (plain→message, blank→null, stub JSON branches).</li>
+    <li>Run <code>npm test</code> → FAIL (module missing).</li>
+    <li>Implement <code>AgyEvent</code>/<code>AgyUsage</code>/<code>AgyResult</code>/<code>ErrorClass</code> + <code>mapAgyLine</code>.</li>
+    <li>Run <code>npm test</code> → PASS.</li>
+    <li>Commit.</li>
+  </ul>
+
+  <h3>Task 2: Error classifier</h3>
+  <p class="files">Create <code>src/adapters/agy/classify.ts</code> · Test <code>src/test/agy-classify.test.ts</code></p>
+  <ul class="check">
+    <li>Write failing <code>classifyError (agy)</code> test (limit/transport/terminal).</li>
+    <li>Run <code>npm test</code> → FAIL.</li>
+    <li>Copy <code>classifyError</code> verbatim from codex with the duplication/ponytail notes.</li>
+    <li>Run <code>npm test</code> → PASS.</li>
+    <li>Commit.</li>
+  </ul>
+
+  <h3>Task 3: runAgy adapter + fake-CLI and real-CLI proof</h3>
+  <p class="files">Create <code>src/adapters/agy/agy-adapter.ts</code> · Test <code>src/test/agy-adapter.integration.test.ts</code></p>
+  <ul class="check">
+    <li>Write fake-CLI tests (exit 0→success+message+lastMessage; exit 1 with 429 stderr→failed+limit) and <code>AGY_E2E</code>-gated happy/cancel tests.</li>
+    <li>Run <code>npm test</code> → FAIL (module missing).</li>
+    <li>Implement <code>runAgy</code> (codex iterator plumbing; success=exit 0; accumulate <code>lastMessage</code>).</li>
+    <li>Run <code>npm test</code> → fake suite PASS, real suite skipped.</li>
+    <li>Run <code>AGY_E2E=1 npm test</code> → real happy/cancel PASS (slow, uses quota).</li>
+    <li>Commit.</li>
+  </ul>
+
+  <div class="us">
+    <h2>US-2: Test Agy webview smoke UI</h2>
+    <p class="mut">A manual <strong>Test Agy</strong> button + <strong>Agy log</strong> panel streaming a real
+    <code>runAgy</code> run, across protocol → host bridge → extension handler → React view.</p>
+  </div>
+
+  <h3>Task 4: Protocol messages + webview bridge</h3>
+  <p class="files">Modify <code>src/webview/protocol.ts</code> · Create <code>src/adapters/agy/webview-bridge.ts</code> · Test <code>src/test/agy-webview-bridge.test.ts</code></p>
+  <ul class="check">
+    <li>Add <code>{ type: "testAgy" }</code> and <code>{ type: "agyLog"; level; text }</code> to the protocol.</li>
+    <li>Write the failing <code>streamAgyTestToWebview</code> test (exact posted log array).</li>
+    <li>Run <code>npm test</code> → FAIL (module missing).</li>
+    <li>Implement the bridge mirroring codex (<code>formatEvent</code> covers all event kinds; "Starting Antigravity test...").</li>
+    <li>Run <code>npm test</code> → PASS.</li>
+    <li>Commit.</li>
+  </ul>
+
+  <h3>Task 5: Wire Test Agy into the extension host and React view</h3>
+  <p class="files">Modify <code>src/webview/panel.ts</code> · Modify <code>src/integration/hello.tsx</code></p>
+  <ul class="check">
+    <li>Handle <code>testAgy</code> in <code>panel.ts</code> via <code>streamAgyTestToWebview</code>.</li>
+    <li>Add the Test Agy button + Agy log panel + <code>agyLog</code> handling in <code>HelloView</code>.</li>
+    <li>Run <code>npm test</code> → all suites PASS (pretest compiles + lints the wiring).</li>
+    <li>Manual smoke test: open the webview, click Test Agy, watch the Agy log stream to <code>done success</code>.</li>
+    <li>Commit.</li>
+  </ul>
+
+  <h2>Out of scope (documented in spec)</h2>
+  <p>The Python <code>google-antigravity</code> SDK sidecar (the upgrade path that fills the usage/thought/tool_call
+  stubs), shared <code>AgentAdapter</code>/<code>WorkerEvent</code>, shared-classifier extraction, fallback/retry,
+  the full step-function panel, soul injection, multi-turn/resume.</p>
+
+  <footer>Skynet — Harness Engineering · Antigravity (agy) adapter implementation plan</footer>
+</div>
+</body>
+</html>
