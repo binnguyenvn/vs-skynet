@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
-import { streamAgyTestToWebview } from "../adapters/agy/webview-bridge";
-import { streamClaudeTestToWebview } from "../adapters/claude/webview-bridge";
-import { streamCodexTestToWebview } from "../adapters/codex/webview-bridge";
+import { agyAdapter } from "../adapters/agy/agy-adapter";
+import { claudeAdapter } from "../adapters/claude/claude-adapter";
+import { codexAdapter } from "../adapters/codex/codex-adapter";
+import { streamAdapterTestToWebview } from "../adapters/webview-bridge";
 import { buildWebviewHtml, nonce } from "./html";
 import type { TestFields, WebviewToExtension } from "./protocol";
 
@@ -46,15 +47,13 @@ export function openWebview(
       const clean = (f?: TestFields): Partial<TestFields> =>
         Object.fromEntries(Object.entries(f ?? {}).filter(([, v]) => v !== ""));
       if (msg.type === "testCodex") {
-        const { oauthToken: _drop, ...opts } = clean(msg.fields);
-        void streamCodexTestToWebview(webview, cwd(), opts);
+        void streamAdapterTestToWebview(codexAdapter, webview, cwd(), clean(msg.fields));
       }
       if (msg.type === "testAgy") {
-        const { oauthToken: _drop, ...opts } = clean(msg.fields);
-        void streamAgyTestToWebview(webview, cwd(), opts);
+        void streamAdapterTestToWebview(agyAdapter, webview, cwd(), clean(msg.fields));
       }
       if (msg.type === "testClaude") {
-        void streamClaudeTestToWebview(webview, cwd(), clean(msg.fields));
+        void streamAdapterTestToWebview(claudeAdapter, webview, cwd(), clean(msg.fields));
       }
     },
     undefined,

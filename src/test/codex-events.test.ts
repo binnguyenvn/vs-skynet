@@ -2,10 +2,10 @@ import * as assert from "assert";
 import { mapCodexLine } from "../adapters/codex/events";
 
 suite("mapCodexLine", () => {
-  test("thread.started -> started", () => {
+  test("thread.started -> started (sessionId)", () => {
     assert.deepStrictEqual(
       mapCodexLine('{"type":"thread.started","thread_id":"abc"}'),
-      { kind: "started", threadId: "abc" });
+      { kind: "started", sessionId: "abc" });
   });
 
   test("agent_message item -> message", () => {
@@ -14,10 +14,10 @@ suite("mapCodexLine", () => {
       { kind: "message", text: "pong" });
   });
 
-  test("turn.completed -> usage", () => {
+  test("turn.completed -> usage (cached + reasoning)", () => {
     assert.deepStrictEqual(
       mapCodexLine('{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":9,"output_tokens":5,"reasoning_output_tokens":0}}'),
-      { kind: "usage", inputTokens: 12, cachedInputTokens: 9, outputTokens: 5, reasoningOutputTokens: 0 });
+      { kind: "usage", inputTokens: 12, outputTokens: 5, cachedInputTokens: 9, reasoningTokens: 0 });
   });
 
   test("blank line -> null", () => assert.strictEqual(mapCodexLine("  "), null));

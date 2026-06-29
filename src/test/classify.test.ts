@@ -1,5 +1,5 @@
 import * as assert from "assert";
-import { classifyError } from "../adapters/codex/classify";
+import { classifyError } from "../adapters/classify";
 
 suite("classifyError", () => {
   test("429 rate limit -> limit", () =>

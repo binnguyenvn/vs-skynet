@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adapter Unification — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Adapter Unification <span class="mut">— Design</span></h1>
+  <p class="sub">2026-06-29 · Epic: Adapters (subsystem 1) · Features: Normalized <code>WorkerEvent</code> stream + Error classification</p>
+  <div class="tags">
+    <span class="tag">Parent: skynet-vision</span>
+    <span class="tag">adapters--events</span>
+    <span class="tag">adapters--errors</span>
+    <span class="tag">Phase 1 — MVP</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>The three adapters (codex, claude, agy) were each built concrete-first and are now structurally identical:
+  a <code>runX()</code> returning an <code>AsyncIterable&lt;XEvent&gt;</code> plus <code>cancel()</code> and
+  <code>result: Promise&lt;XResult&gt;</code>, a per-CLI <code>events.ts</code>, and a <code>classify.ts</code>
+  that is a <strong>byte-for-byte copy</strong> across all three. The adapter specs deliberately deferred the
+  shared types; the ponytail comments in the code name the extraction trigger explicitly.</p>
+  <p>This is that extraction. Pull all three adapters behind <strong>one <code>AgentAdapter</code> interface</strong>
+  emitting <strong>one normalized <code>WorkerEvent</code> stream</strong>, and collapse the three identical
+  classifiers into <strong>one</strong> <code>classifyError</code> — the end state the vision spec's Phase-1 row
+  already describes.</p>
+  <div class="note">Still in scope of <strong>Decision A</strong>: adapters stay dumb bridges. No fallback/retry,
+  no step-function panel, no orchestrator. Pure refactor — same spawn, JSONL, and cancel mechanics; only the
+  <em>emitted shape</em> is normalized and the classifier is deduped.</div>
+
+  <h2>Current state</h2>
+  <pre>src/adapters/
+  codex/  { events.ts (CodexEvent/CodexUsage/CodexResult), classify.ts, codex-adapter.ts, webview-bridge.ts }
+  claude/ { events.ts (ClaudeEvent/ClaudeUsage/ClaudeResult), classify.ts, claude-adapter.ts, webview-bridge.ts }
+  agy/    { events.ts (AgyEvent/AgyUsage/AgyResult), classify.ts, agy-adapter.ts, webview-bridge.ts }</pre>
+  <ul>
+    <li>The three <code>classify.ts</code> are identical; <code>ErrorClass</code> is declared three times.</li>
+    <li><code>XResult</code> is identical across all three.</li>
+    <li>Event unions overlap but diverge in field names; usage shapes differ per provider.</li>
+    <li>Each <code>&lt;cli&gt;/webview-bridge.ts</code> is a near-identical <code>streamXTestToWebview</code>, differing only by log channel and per-CLI fields.</li>
+  </ul>
+
+  <h2>The normalized contract — <code>src/adapters/types.ts</code></h2>
+  <pre>export type ErrorClass = "limit" | "transport" | "terminal";
+
+export type WorkerEvent =
+  | { kind: "started"; sessionId: string; model?: string }  // codex/agy threadId → sessionId; model claude-only
+  | { kind: "message"; text: string }
+  | { kind: "thinking"; text: string }                      // agy "thought" folds in here
+  | { kind: "tool_call"; name: string; input: unknown }     // agy "args" → input
+  | ({ kind: "usage" } & WorkerUsage)
+  | { kind: "unknown"; raw: unknown };
+
+export interface WorkerUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens?: number;  // codex cached_input + claude cache_read (both cache reads)
+  cacheWriteTokens?: number;   // claude cache_creation
+  reasoningTokens?: number;    // codex reasoning_output
+  costUsd?: number;            // claude only
+}
+
+export interface WorkerResult {
+  status: "success" | "failed" | "cancelled";
+  reason?: string; errorClass?: ErrorClass;
+  usage?: WorkerUsage; lastMessage?: string;
+}
+
+export interface RunOpts {     // the COMMON contract; adapters widen it
+  prompt: string; cwd: string; model?: string;
+  configDir?: string;          // CODEX_HOME / CLAUDE_CONFIG_DIR / HOME
+  oauthToken?: string;         // claude-only; other adapters ignore it
+}
+// Advanced knobs stay per-adapter (sandbox is a string union in codex but a
+// boolean in agy — can't share one field):
+//   CodexRunOpts  extends RunOpts { sandbox?: "read-only" | "workspace-write" | "danger-full-access" }
+//   ClaudeRunOpts extends RunOpts { permissionMode?; allowedTools? }
+//   AgyRunOpts    extends RunOpts { sandbox?: boolean; skipPermissions? }
+
+export interface WorkerRun extends AsyncIterable&lt;WorkerEvent&gt; {
+  cancel(): void;
+  result: Promise&lt;WorkerResult&gt;;
+}
+
+export interface AgentAdapter {
+  readonly id: "codex" | "claude" | "agy";
+  run(opts: RunOpts): WorkerRun;
+}</pre>
+
+  <h3>Field mapping per provider</h3>
+  <table>
+    <thead><tr><th>Provider</th><th>started</th><th>thinking</th><th>tool_call</th><th>usage</th></tr></thead>
+    <tbody>
+      <tr><td>codex</td><td><code>thread_id</code>→<code>sessionId</code> (no model)</td><td>—</td><td>—</td><td>input/output + cached_input→<code>cachedInputTokens</code>, reasoning_output→<code>reasoningTokens</code></td></tr>
+      <tr><td>claude</td><td><code>session_id</code>→<code>sessionId</code>, <code>model</code></td><td><code>thinking</code> block</td><td><code>tool_use</code> (name, input)</td><td>input/output + cache_read→<code>cachedInputTokens</code>, cache_creation→<code>cacheWriteTokens</code>, total_cost_usd→<code>costUsd</code></td></tr>
+      <tr><td>agy</td><td><code>thread_id</code>→<code>sessionId</code> (no model)</td><td><code>thought</code>→<code>thinking</code></td><td><code>tool_call</code> (name, args→input)</td><td>input/output only</td></tr>
+    </tbody>
+  </table>
+  <p><code>unknown</code> is preserved verbatim (<code>raw</code>) by every adapter, exactly as today.</p>
+
+  <h2>Shared classifier — <code>src/adapters/classify.ts</code></h2>
+  <p>The single copy of the existing function (unchanged behavior; same <code>LIMIT</code>/<code>TRANSPORT</code> regexes).
+  Call sites unchanged: codex/agy classify <code>stderr</code> on non-zero exit; claude classifies the <code>result</code>
+  text (a <code>429</code> in the result still → <code>limit</code>). Only the function is shared.</p>
+
+  <h2>Adapter &amp; bridge changes</h2>
+  <ul>
+    <li>Each <code>&lt;cli&gt;/events.ts</code>: <code>mapXLine</code> returns normalized <code>WorkerEvent</code>(s); per-CLI types deleted.</li>
+    <li>Each <code>&lt;cli&gt;/&lt;cli&gt;-adapter.ts</code>: imports shared <code>classify</code>/<code>types</code>; exports an <code>AgentAdapter</code> value (<code>{ id, run }</code>). <code>runX</code> internals unchanged.</li>
+    <li>New <code>src/adapters/webview-bridge.ts</code>: generic <code>streamAdapterTestToWebview(adapter, webview, cwd, overrides)</code> + one <code>formatEvent</code>. Posts <code>{ type: `${adapter.id}Log` }</code> — narrows to the existing protocol union, so <code>protocol.ts</code> is unchanged. The three <code>&lt;cli&gt;/webview-bridge.ts</code> deleted.</li>
+    <li><code>panel.ts</code>: each <code>testX</code> selects the matching adapter and calls the one bridge. The three buttons/log panels stay (developer smoke UI).</li>
+  </ul>
+
+  <h2>Data flow</h2>
+  <pre>panel → streamAdapterTestToWebview(adapter) → adapter.run(opts): WorkerRun
+      → yields WorkerEvent → formatEvent → { type: `${id}Log` } postMessage
+      → run.result: WorkerResult → "done success" / "done &lt;status&gt;: &lt;reason&gt;"</pre>
+
+  <h2>Testing</h2>
+  <ul>
+    <li><code>*-events.test.ts</code> rewritten to assert normalized <code>WorkerEvent</code>/<code>WorkerUsage</code> (claude: <code>cachedInputTokens</code>+<code>cacheWriteTokens</code>+<code>costUsd</code>; codex: <code>cachedInputTokens</code>+<code>reasoningTokens</code>; agy <code>thought</code>→<code>thinking</code>; <code>started.model</code> only for claude).</li>
+    <li>One shared <code>classify.test.ts</code> replaces the three identical copies.</li>
+    <li><code>*-adapter.integration.test.ts</code> updated to shared types; <code>CODEX_E2E</code>/<code>CLAUDE_E2E</code> real-CLI proofs stay green.</li>
+    <li>One <code>webview-bridge.test.ts</code> asserts the generic bridge over a fake <code>AgentAdapter</code>, incl. the posted <code>type</code> matching <code>adapter.id</code>.</li>
+    <li><code>npm test</code> (pretest compiles + lints) stays green.</li>
+  </ul>
+
+  <h2>User Stories</h2>
+  <ul>
+    <li><strong>US-1 — Normalized adapter core</strong> (<code>adapters--events</code> + <code>adapters--errors</code>): shared <code>types.ts</code> + <code>classify.ts</code>; all three adapters emit <code>WorkerEvent</code>, expose an <code>AgentAdapter</code>, call the shared classifier; per-CLI types and the three classifiers deleted.</li>
+    <li><strong>US-2 — Generic webview bridge</strong>: one <code>webview-bridge.ts</code> over <code>WorkerEvent</code>; three <code>&lt;cli&gt;/webview-bridge.ts</code> deleted; <code>panel.ts</code> rewired; bridge tests collapsed. <code>protocol.ts</code> and React UI unchanged.</li>
+  </ul>
+
+  <h2>Out of scope (YAGNI)</h2>
+  <ul>
+    <li>New event fields (meta/timestamps/sequence), a <code>tool_result</code> kind, or streaming partial text — no CLI feeds them today.</li>
+    <li>Backfilling <code>started.model</code> for codex/agy (stays optional).</li>
+    <li>Fallback/retry/AgentPool (Decision A — later Orchestrator concern).</li>
+    <li>Replacing the smoke UI with a real observability panel (subsystem 2).</li>
+    <li>Refining classifier regexes against real limit/transport output (data-driven follow-up).</li>
+  </ul>
+
+  <footer>Adapter Unification — Design · 2026-06-29 · Skynet Harness · source of truth: the <code>.md</code> spec</footer>
+</div>
+</body>
+</html>

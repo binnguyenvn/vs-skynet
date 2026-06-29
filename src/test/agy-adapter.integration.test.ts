@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "os";
 import * as path from "node:path";
 import { runAgy } from "../adapters/agy/agy-adapter";
-import type { AgyEvent } from "../adapters/agy/events";
+import type { WorkerEvent } from "../adapters/types";
 
 async function withFakeAgy(script: string, fn: () => Promise<void>): Promise<void> {
   const binDir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-agy-"));
@@ -24,7 +24,7 @@ suite("agy adapter (fake CLI)", () => {
   test("exit 0 with text -> success, message streamed, lastMessage accumulated", async () => {
     await withFakeAgy("#!/bin/sh\nprintf '%s\\n' 'pong'\nexit 0\n", async () => {
       const run = runAgy({ prompt: "ignored", cwd: os.tmpdir() });
-      const events: AgyEvent[] = [];
+      const events: WorkerEvent[] = [];
       for await (const ev of run) {
         events.push(ev);
       }
@@ -51,7 +51,7 @@ suite("agy adapter (fake CLI)", () => {
   test("passes prompt as the --print value before flags", async () => {
     await withFakeAgy("#!/bin/sh\nprintf '%s\\n' \"$1|$2|$3\"\n", async () => {
       const run = runAgy({ prompt: "hello", cwd: os.tmpdir() });
-      const events: AgyEvent[] = [];
+      const events: WorkerEvent[] = [];
       for await (const ev of run) {
         events.push(ev);
       }
@@ -70,7 +70,7 @@ describe("agy adapter (real CLI, slow — set AGY_E2E=1)", function () {
 
   test("happy path: reply pong -> success", async () => {
     const run = runAgy({ prompt: "Reply with exactly the word: pong", cwd: os.tmpdir() });
-    const events: AgyEvent[] = [];
+    const events: WorkerEvent[] = [];
     for await (const ev of run) {
       events.push(ev);
     }

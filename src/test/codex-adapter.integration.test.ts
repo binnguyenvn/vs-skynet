@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "os";
 import * as path from "node:path";
 import { runCodex } from "../adapters/codex/codex-adapter";
-import type { CodexEvent } from "../adapters/codex/events";
+import type { WorkerEvent } from "../adapters/types";
 
 suite("codex adapter", () => {
   test("exit 0 without turn.completed fails as incomplete output without terminal classification", async () => {
@@ -41,7 +41,7 @@ describe("codex adapter (real CLI, slow - set CODEX_E2E=1)", function () {
 
   test("happy path: reply pong -> success with usage", async () => {
     const run = runCodex({ prompt: "Reply with exactly the word: pong", cwd: os.tmpdir() });
-    const events: CodexEvent[] = [];
+    const events: WorkerEvent[] = [];
     for await (const ev of run) {
       events.push(ev);
     }

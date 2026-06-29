@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adapter Unification — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  .task{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  .files{font-size:13px;color:var(--mut)}
+  .check{list-style:none;padding-left:0}
+  .check li{margin:5px 0;padding-left:26px;position:relative}
+  .check li::before{content:"☐";position:absolute;left:0;color:var(--mut)}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Adapter Unification <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">2026-06-29 · Spec: <code>2026-06-29-adapter-unification-design.md</code></p>
+  <div class="tags">
+    <span class="tag">adapters--events</span>
+    <span class="tag">adapters--errors</span>
+    <span class="tag">2 User Stories · 5 Tasks</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>Pull codex/claude/agy behind one <code>AgentAdapter</code> interface emitting a normalized
+  <code>WorkerEvent</code> stream, and collapse the three byte-identical <code>classify.ts</code> copies and three
+  near-identical webview bridges into one each. Pure refactor — spawn/JSONL/cancel mechanics unchanged.</p>
+
+  <div class="note">Implement task-by-task via <strong>superpowers:subagent-driven-development</strong> or
+  <strong>executing-plans</strong>. Each task ends green (<code>npm test</code>) and is committed.</div>
+
+  <h2>Global Constraints</h2>
+  <ul>
+    <li>Decision A holds — no fallback/retry; pure refactor, no behavior change.</li>
+    <li>Shared <code>RunOpts</code> = common fields (<code>prompt</code>, <code>cwd</code>, <code>model?</code>, <code>configDir?</code>, <code>oauthToken?</code>); advanced knobs in <code>&lt;Cli&gt;RunOpts extends RunOpts</code> (sidesteps the <code>sandbox</code> string-vs-boolean conflict).</li>
+    <li>Usage mapping: codex <code>cached_input</code> + claude <code>cache_read</code> → <code>cachedInputTokens</code>; claude <code>cache_creation</code> → <code>cacheWriteTokens</code>; codex <code>reasoning_output</code> → <code>reasoningTokens</code>; claude <code>total_cost_usd</code> → <code>costUsd</code>.</li>
+    <li>Mocha <code>suite</code>/<code>test</code> + <code>node:assert</code>; <code>npm test</code> runs the suite. Real-CLI suites gated by <code>CODEX_E2E</code>/<code>CLAUDE_E2E</code>.</li>
+    <li>Commits end with the <code>Co-Authored-By: Claude Opus 4.8</code> trailer.</li>
+  </ul>
+
+  <h2>US-1: Normalized adapter core <span class="mut">(adapters--events + adapters--errors)</span></h2>
+
+  <div class="task">
+    <h3>Task 1 — Shared contract + shared classifier</h3>
+    <p class="files">Create <code>src/adapters/types.ts</code>, <code>src/adapters/classify.ts</code> · Test <code>src/test/classify.test.ts</code></p>
+    <ul class="check">
+      <li>Create <code>types.ts</code> (WorkerEvent/WorkerUsage/WorkerResult/RunOpts/WorkerRun/AgentAdapter/ErrorClass)</li>
+      <li>Write failing <code>classify.test.ts</code> (6 cases) · run → fail</li>
+      <li>Create shared <code>classify.ts</code> · run → pass · commit</li>
+    </ul>
+  </div>
+
+  <div class="task">
+    <h3>Task 2 — Convert the codex adapter</h3>
+    <p class="files">Modify <code>codex/events.ts</code>, <code>codex/codex-adapter.ts</code> · Delete <code>codex/classify.ts</code> + <code>codex-classify.test.ts</code> · Update <code>codex-events.test.ts</code>, <code>codex-adapter.integration.test.ts</code></p>
+    <ul class="check">
+      <li>Rewrite event test (started→sessionId, usage→cached/reasoning) · run → fail</li>
+      <li>Rewrite mapper to return <code>WorkerEvent</code></li>
+      <li>Adapter → shared types, <code>../classify</code>, export <code>codexAdapter</code>; <code>CodexRunOpts extends RunOpts</code></li>
+      <li>Delete codex classifier + its test · fix integration import · <code>npm test</code> → pass · commit</li>
+    </ul>
+  </div>
+
+  <div class="task">
+    <h3>Task 3 — Convert the claude adapter</h3>
+    <p class="files">Modify <code>claude/events.ts</code>, <code>claude/claude-adapter.ts</code> · Delete <code>claude/classify.ts</code> + <code>claude-classify.test.ts</code> · Update <code>claude-events.test.ts</code>, <code>claude-adapter.integration.test.ts</code></p>
+    <ul class="check">
+      <li>Rewrite event test (usage→cachedInputTokens/cacheWriteTokens/costUsd) · run → fail</li>
+      <li>Rewrite mapper (<code>toUsage</code> → normalized) returning <code>WorkerEvent[]</code></li>
+      <li>Adapter → shared types, export <code>claudeAdapter</code>; <code>ClaudeRunOpts extends RunOpts</code></li>
+      <li>Delete claude classifier + test · fix integration import · <code>npm test</code> → pass · commit</li>
+    </ul>
+  </div>
+
+  <div class="task">
+    <h3>Task 4 — Convert the agy adapter</h3>
+    <p class="files">Modify <code>agy/events.ts</code>, <code>agy/agy-adapter.ts</code> · Delete <code>agy/classify.ts</code> + <code>agy-classify.test.ts</code> · Update <code>agy-events.test.ts</code>, <code>agy-adapter.integration.test.ts</code></p>
+    <ul class="check">
+      <li>Rewrite event test (thought→thinking, tool_call→input, started→sessionId) · run → fail</li>
+      <li>Rewrite mapper returning <code>WorkerEvent | null</code></li>
+      <li>Adapter → shared types, export <code>agyAdapter</code>; <code>AgyRunOpts extends RunOpts</code></li>
+      <li>Delete agy classifier + test · fix integration imports · <code>npm test</code> → pass · commit</li>
+    </ul>
+  </div>
+
+  <h2>US-2: Generic webview bridge</h2>
+
+  <div class="task">
+    <h3>Task 5 — Collapse the three bridges into one</h3>
+    <p class="files">Create <code>src/adapters/webview-bridge.ts</code> + <code>src/test/webview-bridge.test.ts</code> · Delete 3 <code>&lt;cli&gt;/webview-bridge.ts</code> + 3 bridge tests · Modify <code>src/webview/panel.ts</code></p>
+    <ul class="check">
+      <li>Write failing generic bridge test (fake AgentAdapter; 3 cases) · run → fail</li>
+      <li>Create <code>streamAdapterTestToWebview</code> + unified <code>formatEvent</code> · run → pass</li>
+      <li>Delete the 3 old bridges + 3 old tests</li>
+      <li>Rewire <code>panel.ts</code> to select the adapter + call the one bridge</li>
+      <li><code>npm test</code> → pass · manual smoke (optional) · commit</li>
+    </ul>
+  </div>
+
+  <footer>Adapter Unification — Implementation Plan · 2026-06-29 · Skynet Harness · source of truth: the <code>.md</code> plan</footer>
+</div>
+</body>
+</html>

@@ -45,11 +45,11 @@
     "feature": "Normalized event stream",
     "title": "Normalized WorkerEvent stream",
     "description": "One typed, CLI-agnostic event shape (reasoning, tool-call/result, file-change, log, usage) across all adapters.",
-    "status": "open",
-    "spec": "specs/2026-06-29-skynet-vision-design.md",
+    "status": "released",
+    "spec": "specs/2026-06-29-adapter-unification-design.md",
     "plan": null,
     "created": "2026-06-29",
-    "completed": null
+    "completed": "2026-06-29"
   },
   {
     "slug": "adapters--errors",
@@ -58,11 +58,11 @@
     "feature": "Error classification",
     "title": "Error classification (limit/transport vs terminal)",
     "description": "Each adapter classifies failures so the later fallback layer has a signal. No fallback logic in the adapter itself.",
-    "status": "open",
-    "spec": "specs/2026-06-29-skynet-vision-design.md",
+    "status": "released",
+    "spec": "specs/2026-06-29-adapter-unification-design.md",
     "plan": null,
     "created": "2026-06-29",
-    "completed": null
+    "completed": "2026-06-29"
   },
   {
     "slug": "harness--stepfn-panel",

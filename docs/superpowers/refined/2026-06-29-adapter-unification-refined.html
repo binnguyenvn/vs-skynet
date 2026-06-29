@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adapter Unification — Refined User Stories</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .us{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 20px;margin:16px 0}
+  .lbl{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:10px}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Adapter Unification <span class="mut">— Refined User Stories</span></h1>
+  <p class="sub">2026-06-29 · Spec + Plan: <code>2026-06-29-adapter-unification-*</code></p>
+  <div class="tags">
+    <span class="tag">2 vertical slices</span>
+    <span class="tag">adapters--events</span>
+    <span class="tag">adapters--errors</span>
+  </div>
+
+  <div class="note">Audit found no slicing violations. US-1 folds the shared types into the same feature that
+  consumes them (not a standalone "types" layer); US-2 is the downstream consumer collapse. The two roadmap slugs
+  live in US-1 together because deduping the classifier and switching to the normalized event stream touch the
+  same adapter files — one refactor, not two features.</div>
+
+  <div class="us">
+    <h2 style="border:0;margin-top:0">US-1: Normalized adapter core — all three CLIs speak one event language</h2>
+    <p><strong>What it does:</strong> codex, claude, and agy each emit their own slightly different event objects and
+    each ship an identical copy of the error classifier. This makes them emit <strong>one</strong> shared event shape
+    (<code>WorkerEvent</code>) and result, expose a common <code>AgentAdapter</code> handle, and call <strong>one</strong>
+    shared classifier — so the app (and the future orchestrator) can drive any CLI without knowing which one it is.</p>
+    <div class="lbl">Scope — In</div>
+    <ul>
+      <li>Shared <code>types.ts</code> + <code>classify.ts</code>.</li>
+      <li>All three <code>events.ts</code> mappers return <code>WorkerEvent</code>(s).</li>
+      <li>All three adapters use shared types and export <code>&lt;id&gt;Adapter: AgentAdapter</code>.</li>
+      <li>Per-CLI event/usage/result types + three <code>classify.ts</code> copies deleted; tests rewritten (incl. gated real-CLI proofs).</li>
+    </ul>
+    <div class="lbl">Scope — Out</div>
+    <ul><li>Bridge collapse (US-2); new event fields; fallback/retry (Decision A); classifier regex refinement.</li></ul>
+    <div class="lbl">Acceptance</div>
+    <ul>
+      <li>Normalized events: <code>started.sessionId</code> (model claude-only); agy <code>thought</code>→<code>thinking</code>, <code>args</code>→<code>input</code>; usage carries <code>cachedInputTokens</code>/<code>cacheWriteTokens</code>/<code>reasoningTokens</code>/<code>costUsd</code> as applicable.</li>
+      <li>Each adapter exports an <code>AgentAdapter</code> returning a <code>WorkerRun</code>.</li>
+      <li>One shared <code>classifyError</code>; no per-CLI event types or classifiers remain.</li>
+      <li><code>npm test</code> green incl. gated real-CLI runs.</li>
+    </ul>
+    <div class="lbl">Tasks</div>
+    <p>Task 1 (shared types + classifier), Task 2 (codex), Task 3 (claude), Task 4 (agy).</p>
+  </div>
+
+  <div class="us">
+    <h2 style="border:0;margin-top:0">US-2: Generic webview bridge — one smoke-test path for every adapter</h2>
+    <p><strong>What it does:</strong> the three near-identical "Test X" bridges become <strong>one</strong> generic bridge
+    taking any <code>AgentAdapter</code>. A developer still clicks Test Codex / Test Claude / Test Agy and watches the run
+    stream — one code path instead of three.</p>
+    <div class="lbl">Scope — In</div>
+    <ul>
+      <li>New <code>src/adapters/webview-bridge.ts</code> (<code>streamAdapterTestToWebview</code> + unified <code>formatEvent</code>).</li>
+      <li>Delete three <code>&lt;cli&gt;/webview-bridge.ts</code> + three tests; one new generic test.</li>
+      <li>Rewire <code>panel.ts</code> to pick the adapter per test message.</li>
+    </ul>
+    <div class="lbl">Scope — Out</div>
+    <ul><li><code>protocol.ts</code> + React UI unchanged; no production observability panel.</li></ul>
+    <div class="lbl">Acceptance</div>
+    <ul>
+      <li>Posts <code>Starting &lt;Id&gt; test...</code>, one line per event, then <code>done success</code>/<code>done &lt;status&gt;: &lt;reason&gt;</code> on the <code>${adapter.id}Log</code> channel.</li>
+      <li><code>started</code> without model omits the parenthetical; usage shows only present fields.</li>
+      <li>Old bridges/tests gone; <code>npm test</code> green; each button streams to its panel ending in <code>done success</code>.</li>
+    </ul>
+    <div class="lbl">Tasks</div>
+    <p>Task 5 (generic bridge + panel rewire).</p>
+  </div>
+
+  <footer>Adapter Unification — Refined User Stories · 2026-06-29 · Skynet Harness</footer>
+</div>
+</body>
+</html>

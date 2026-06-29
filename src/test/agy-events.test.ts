@@ -13,22 +13,22 @@ suite("mapAgyLine", () => {
   test("blank line -> null", () => assert.strictEqual(mapAgyLine("   "), null));
 
   // Forward-compat stub branches (dormant until the SDK sidecar emits JSONL):
-  test("JSON thread.started -> started", () => {
+  test("JSON thread.started -> started (sessionId)", () => {
     assert.deepStrictEqual(
       mapAgyLine('{"type":"thread.started","thread_id":"abc"}'),
-      { kind: "started", threadId: "abc" });
+      { kind: "started", sessionId: "abc" });
   });
 
-  test("JSON tool_call -> tool_call", () => {
+  test("JSON tool_call -> tool_call (input)", () => {
     assert.deepStrictEqual(
       mapAgyLine('{"type":"tool_call","name":"run_command","args":{"cmd":"ls"}}'),
-      { kind: "tool_call", name: "run_command", args: { cmd: "ls" } });
+      { kind: "tool_call", name: "run_command", input: { cmd: "ls" } });
   });
 
-  test("JSON thought -> thought", () => {
+  test("JSON thought -> thinking", () => {
     assert.deepStrictEqual(
       mapAgyLine('{"type":"thought","text":"hmm"}'),
-      { kind: "thought", text: "hmm" });
+      { kind: "thinking", text: "hmm" });
   });
 
   test("JSON usage -> usage", () => {

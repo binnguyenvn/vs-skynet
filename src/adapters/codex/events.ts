@@ -1,29 +1,8 @@
-export interface CodexUsage {
-  inputTokens: number;
-  cachedInputTokens: number;
-  outputTokens: number;
-  reasoningOutputTokens: number;
-}
+import type { WorkerEvent } from "../types";
 
-export type ErrorClass = "limit" | "transport" | "terminal";
-
-export type CodexEvent =
-  | { kind: "started"; threadId: string }
-  | { kind: "message"; text: string }
-  | ({ kind: "usage" } & CodexUsage)
-  | { kind: "unknown"; raw: unknown };
-
-export interface CodexResult {
-  status: "success" | "failed" | "cancelled";
-  reason?: string;
-  errorClass?: ErrorClass;
-  usage?: CodexUsage;
-  lastMessage?: string;
-}
-
-// Map one codex `exec --json` JSONL line to a CodexEvent.
+// Map one codex `exec --json` JSONL line to a WorkerEvent.
 // Returns null for blank or non-JSON lines (e.g. the stdin notice).
-export function mapCodexLine(line: string): CodexEvent | null {
+export function mapCodexLine(line: string): WorkerEvent | null {
   const trimmed = line.trim();
   if (!trimmed) {
     return null;
@@ -38,7 +17,7 @@ export function mapCodexLine(line: string): CodexEvent | null {
 
   switch (obj?.type) {
     case "thread.started":
-      return { kind: "started", threadId: String(obj.thread_id ?? "") };
+      return { kind: "started", sessionId: String(obj.thread_id ?? "") };
     case "item.completed":
       if (obj.item?.type === "agent_message") {
         return { kind: "message", text: String(obj.item.text ?? "") };
@@ -49,9 +28,9 @@ export function mapCodexLine(line: string): CodexEvent | null {
       return {
         kind: "usage",
         inputTokens: u.input_tokens ?? 0,
-        cachedInputTokens: u.cached_input_tokens ?? 0,
         outputTokens: u.output_tokens ?? 0,
-        reasoningOutputTokens: u.reasoning_output_tokens ?? 0,
+        cachedInputTokens: u.cached_input_tokens ?? 0,
+        reasoningTokens: u.reasoning_output_tokens ?? 0,
       };
     }
     default:
