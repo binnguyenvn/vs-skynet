@@ -14,6 +14,8 @@ export function HelloView() {
   const [running, setRunning] = useState(false);
   const [agyLogs, setAgyLogs] = useState<LogLine[]>([]);
   const [agyRunning, setAgyRunning] = useState(false);
+  const [claudeLogs, setClaudeLogs] = useState<LogLine[]>([]);
+  const [claudeRunning, setClaudeRunning] = useState(false);
 
   useEffect(
     () =>
@@ -33,6 +35,12 @@ export function HelloView() {
             setAgyRunning(false);
           }
         }
+        if (msg.type === "claudeLog") {
+          setClaudeLogs((current) => [...current, { level: msg.level, text: msg.text }]);
+          if (msg.level === "error" || msg.text.startsWith("done ")) {
+            setClaudeRunning(false);
+          }
+        }
       }),
     []
   );
@@ -48,6 +56,12 @@ export function HelloView() {
     setAgyLogs([]);
     setAgyRunning(true);
     postMessage({ type: "testAgy" });
+  };
+
+  const testClaude = () => {
+    setClaudeLogs([]);
+    setClaudeRunning(true);
+    postMessage({ type: "testClaude" });
   };
 
   const renderLog = (lines: LogLine[], emptyHint: string) => (
@@ -82,6 +96,10 @@ export function HelloView() {
           <TerminalIcon />
           {agyRunning ? "Testing Antigravity..." : "Test Agy"}
         </Button>
+        <Button onClick={testClaude} disabled={claudeRunning} variant="secondary">
+          <TerminalIcon />
+          {claudeRunning ? "Testing Claude..." : "Test Claude"}
+        </Button>
       </div>
       {reply && <p>{reply}</p>}
       <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
@@ -91,6 +109,10 @@ export function HelloView() {
       <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
         <div className="mb-2 font-sans text-sm font-medium">Agy log</div>
         {renderLog(agyLogs, "Click Test Agy to stream logs here.")}
+      </div>
+      <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
+        <div className="mb-2 font-sans text-sm font-medium">Claude log</div>
+        {renderLog(claudeLogs, "Click Test Claude to stream logs here.")}
       </div>
     </div>
   );
