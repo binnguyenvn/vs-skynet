@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 # vscode extension development
 .vscode-test/
 *.vsix
+
+# Local git worktrees
+.worktrees/
