@@ -34,6 +34,7 @@ function formatEvent(ev: ClaudeEvent): string | null {
 export async function streamClaudeTestToWebview(
   webview: LogWebview,
   cwd: string,
+  overrides: Partial<RunOpts> = {},
   runner: ClaudeRunner = runClaude
 ): Promise<void> {
   await postLog(webview, "info", "Starting Claude test...");
@@ -41,6 +42,7 @@ export async function streamClaudeTestToWebview(
   const run = runner({
     prompt: "Reply with exactly the word: pong",
     cwd,
+    ...overrides,
   });
 
   try {

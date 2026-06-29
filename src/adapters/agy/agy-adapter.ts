@@ -9,6 +9,7 @@ export interface RunOpts {
   model?: string;
   sandbox?: boolean;
   skipPermissions?: boolean;
+  configDir?: string; // → HOME, isolates the whole home dir per account
 }
 
 /**
@@ -33,7 +34,11 @@ export function runAgy(opts: RunOpts): AgyRun {
   }
   args.push("--add-dir", opts.cwd);
 
-  const child = spawn("agy", args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("agy", args, {
+    cwd: opts.cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...(opts.configDir ? { HOME: opts.configDir } : {}) },
+  });
 
   let stderr = "";
   child.stderr?.on("data", (d) => {

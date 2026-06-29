@@ -21,6 +21,7 @@ suite("streamAgyTestToWebview", () => {
         },
       },
       "/tmp",
+      {},
       () => ({
         cancel() {},
         result: Promise.resolve(result),

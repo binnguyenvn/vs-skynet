@@ -9,6 +9,8 @@ export interface RunOpts {
   model?: string;
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions";
   allowedTools?: string[];
+  configDir?: string; // → CLAUDE_CONFIG_DIR, isolates auth/config per account
+  oauthToken?: string; // → CLAUDE_CODE_OAUTH_TOKEN
 }
 
 /**
@@ -31,7 +33,15 @@ export function runClaude(opts: RunOpts): ClaudeRun {
   }
   args.push("--add-dir", opts.cwd);
 
-  const child = spawn("claude", args, { cwd: opts.cwd, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("claude", args, {
+    cwd: opts.cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...process.env,
+      ...(opts.configDir ? { CLAUDE_CONFIG_DIR: opts.configDir } : {}),
+      ...(opts.oauthToken ? { CLAUDE_CODE_OAUTH_TOKEN: opts.oauthToken } : {}),
+    },
+  });
 
   let stderr = "";
   child.stderr?.on("data", (d) => {

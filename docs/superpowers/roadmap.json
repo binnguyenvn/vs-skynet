@@ -32,11 +32,11 @@
     "feature": "Antigravity adapter",
     "title": "Antigravity (agy) adapter",
     "description": "google x cli bridge. Verified agy 1.0.13: --print is plain-text only (no JSON/usage/events), so the codex-shaped event type is mostly stubbed with a documented Python-SDK sidecar upgrade path. Mirrors codex; reuses classifyError.",
-    "status": "open",
+    "status": "released",
     "spec": "specs/2026-06-29-antigravity-adapter-design.md",
     "plan": null,
     "created": "2026-06-29",
-    "completed": null
+    "completed": "2026-06-29"
   },
   {
     "slug": "adapters--events",

@@ -8,6 +8,7 @@ export interface RunOpts {
   cwd: string;
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  configDir?: string; // → CODEX_HOME, isolates auth/config per account
 }
 
 /**
@@ -31,7 +32,10 @@ export function runCodex(opts: RunOpts): CodexRun {
   args.push(opts.prompt);
 
   // stdin 'ignore' is mandatory; an open/empty pipe makes codex block.
-  const child = spawn("codex", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("codex", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...(opts.configDir ? { CODEX_HOME: opts.configDir } : {}) },
+  });
 
   let stderr = "";
   child.stderr?.on("data", (d) => {
