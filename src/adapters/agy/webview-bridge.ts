@@ -32,6 +32,7 @@ function formatEvent(ev: AgyEvent): string | null {
 export async function streamAgyTestToWebview(
   webview: LogWebview,
   cwd: string,
+  overrides: Partial<RunOpts> = {},
   runner: AgyRunner = runAgy
 ): Promise<void> {
   await postLog(webview, "info", "Starting Antigravity test...");
@@ -39,6 +40,7 @@ export async function streamAgyTestToWebview(
   const run = runner({
     prompt: "Reply with exactly the word: pong",
     cwd,
+    ...overrides,
   });
 
   try {

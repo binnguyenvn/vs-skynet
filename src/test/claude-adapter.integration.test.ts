@@ -96,6 +96,21 @@ suite("claude adapter (fake CLI)", () => {
       assert.strictEqual(result.lastMessage, "-p hello");
     });
   });
+
+  test("configDir -> CLAUDE_CONFIG_DIR in child env", async () => {
+    const script =
+      "#!/bin/sh\n" +
+      "printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"'\"$CLAUDE_CONFIG_DIR\"'\"}\\n'\n" +
+      "exit 0\n";
+    await withFakeClaude(script, async () => {
+      const run = runClaude({ prompt: "hi", cwd: os.tmpdir(), configDir: "/tmp/acct-x" });
+      for await (const _ of run) {
+        // drain
+      }
+      const result = await run.result;
+      assert.strictEqual(result.lastMessage, "/tmp/acct-x");
+    });
+  });
 });
 
 const describe = process.env.CLAUDE_E2E ? suite : suite.skip;

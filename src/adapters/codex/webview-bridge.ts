@@ -28,6 +28,7 @@ function formatEvent(ev: CodexEvent): string | null {
 export async function streamCodexTestToWebview(
   webview: LogWebview,
   cwd: string,
+  overrides: Partial<RunOpts> = {},
   runner: CodexRunner = runCodex
 ): Promise<void> {
   await postLog(webview, "info", "Starting Codex test...");
@@ -35,6 +36,7 @@ export async function streamCodexTestToWebview(
   const run = runner({
     prompt: "Reply with exactly the word: pong",
     cwd,
+    ...overrides,
   });
 
   try {

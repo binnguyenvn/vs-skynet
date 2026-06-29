@@ -23,6 +23,7 @@ suite("streamClaudeTestToWebview", () => {
         },
       },
       "/tmp",
+      {},
       () => ({
         cancel() {},
         result: Promise.resolve(result),

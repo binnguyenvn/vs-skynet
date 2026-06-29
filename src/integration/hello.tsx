@@ -1,21 +1,121 @@
 import { useEffect, useState } from "react";
 import { TerminalIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { onMessage, postMessage } from "@/lib/vscode";
+import type { ExtensionToWebview, TestFields, WebviewToExtension } from "@/protocol";
 
 interface LogLine {
   level: "info" | "error";
   text: string;
 }
 
-export function HelloView() {
-  const [reply, setReply] = useState("");
+type LogMsg = Extract<ExtensionToWebview, { level: "info" | "error" }>;
+const isLog = (msg: ExtensionToWebview): msg is LogMsg => msg.type !== "greeting";
+
+interface FieldDef {
+  key: keyof TestFields;
+  label: string;
+  placeholder: string;
+}
+
+// prompt/model/configDir apply to all three CLIs; oauthToken is claude-only.
+const COMMON_FIELDS: FieldDef[] = [
+  { key: "prompt", label: "Prompt", placeholder: "Reply with exactly the word: pong" },
+  { key: "model", label: "Model", placeholder: "(adapter default)" },
+  { key: "configDir", label: "configDir", placeholder: "isolate account, e.g. ~/.agents/cc-thai" },
+];
+
+type TestMsg = Extract<WebviewToExtension, { fields?: TestFields }>;
+
+interface CliConfig {
+  type: TestMsg["type"];
+  log: LogMsg["type"];
+  title: string;
+  fields: FieldDef[];
+}
+
+const CLIS: CliConfig[] = [
+  { type: "testCodex", log: "codexLog", title: "Codex", fields: COMMON_FIELDS },
+  { type: "testAgy", log: "agyLog", title: "Agy", fields: COMMON_FIELDS },
+  {
+    type: "testClaude",
+    log: "claudeLog",
+    title: "Claude",
+    fields: [
+      ...COMMON_FIELDS,
+      { key: "oauthToken", label: "oauthToken", placeholder: "CLAUDE_CODE_OAUTH_TOKEN" },
+    ],
+  },
+];
+
+function CliForm({ config }: { config: CliConfig }) {
+  const [values, setValues] = useState<TestFields>({});
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [running, setRunning] = useState(false);
-  const [agyLogs, setAgyLogs] = useState<LogLine[]>([]);
-  const [agyRunning, setAgyRunning] = useState(false);
-  const [claudeLogs, setClaudeLogs] = useState<LogLine[]>([]);
-  const [claudeRunning, setClaudeRunning] = useState(false);
+
+  useEffect(
+    () =>
+      onMessage((msg) => {
+        if (isLog(msg) && msg.type === config.log) {
+          setLogs((current) => [...current, { level: msg.level, text: msg.text }]);
+          if (msg.level === "error" || msg.text.startsWith("done ")) {
+            setRunning(false);
+          }
+        }
+      }),
+    [config.log]
+  );
+
+  const run = () => {
+    setLogs([]);
+    setRunning(true);
+    postMessage({ type: config.type, fields: values });
+  };
+
+  return (
+    <div className="w-full rounded-md border bg-muted/30 p-3">
+      <div className="mb-2 text-sm font-medium">{config.title}</div>
+      <div className="flex flex-col gap-2">
+        {config.fields.map((f) => (
+          <div key={f.key} className="flex flex-col gap-1">
+            <Label htmlFor={`${config.type}-${f.key}`} className="text-xs">
+              {f.label}
+            </Label>
+            <Input
+              id={`${config.type}-${f.key}`}
+              value={values[f.key] ?? ""}
+              placeholder={f.placeholder}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+            />
+          </div>
+        ))}
+      </div>
+      <Button onClick={run} disabled={running} variant="secondary" className="mt-3">
+        <TerminalIcon />
+        {running ? `Testing ${config.title}...` : `Test ${config.title}`}
+      </Button>
+      <div className="mt-3 font-mono text-xs whitespace-pre-wrap break-words flex flex-col gap-1">
+        {logs.length === 0 ? (
+          <span className="text-muted-foreground">Click Test {config.title} to stream logs here.</span>
+        ) : (
+          logs.map((line, index) => (
+            <div
+              key={`${line.text}-${index}`}
+              className={line.level === "error" ? "text-destructive" : "text-foreground"}
+            >
+              {line.text}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function HelloView() {
+  const [reply, setReply] = useState("");
 
   useEffect(
     () =>
@@ -23,97 +123,20 @@ export function HelloView() {
         if (msg.type === "greeting") {
           setReply(msg.text);
         }
-        if (msg.type === "codexLog") {
-          setLogs((current) => [...current, { level: msg.level, text: msg.text }]);
-          if (msg.level === "error" || msg.text.startsWith("done ")) {
-            setRunning(false);
-          }
-        }
-        if (msg.type === "agyLog") {
-          setAgyLogs((current) => [...current, { level: msg.level, text: msg.text }]);
-          if (msg.level === "error" || msg.text.startsWith("done ")) {
-            setAgyRunning(false);
-          }
-        }
-        if (msg.type === "claudeLog") {
-          setClaudeLogs((current) => [...current, { level: msg.level, text: msg.text }]);
-          if (msg.level === "error" || msg.text.startsWith("done ")) {
-            setClaudeRunning(false);
-          }
-        }
       }),
     []
-  );
-
-  const testCodex = () => {
-    setReply("");
-    setLogs([]);
-    setRunning(true);
-    postMessage({ type: "testCodex" });
-  };
-
-  const testAgy = () => {
-    setAgyLogs([]);
-    setAgyRunning(true);
-    postMessage({ type: "testAgy" });
-  };
-
-  const testClaude = () => {
-    setClaudeLogs([]);
-    setClaudeRunning(true);
-    postMessage({ type: "testClaude" });
-  };
-
-  const renderLog = (lines: LogLine[], emptyHint: string) => (
-    <div className="flex min-h-32 flex-col gap-1 whitespace-pre-wrap break-words">
-      {lines.length === 0 ? (
-        <span className="text-muted-foreground">{emptyHint}</span>
-      ) : (
-        lines.map((line, index) => (
-          <div
-            key={`${line.text}-${index}`}
-            className={line.level === "error" ? "text-destructive" : "text-foreground"}
-          >
-            {line.text}
-          </div>
-        ))
-      )}
-    </div>
   );
 
   return (
     <div className="p-4 flex max-w-3xl flex-col gap-4 items-start">
       <h1 className="text-lg font-semibold">Skynet Webview</h1>
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={() => postMessage({ type: "hello", name: "Skynet" })}>
-          Say hello to the extension
-        </Button>
-        <Button onClick={testCodex} disabled={running} variant="secondary">
-          <TerminalIcon />
-          {running ? "Testing Codex..." : "Test Codex"}
-        </Button>
-        <Button onClick={testAgy} disabled={agyRunning} variant="secondary">
-          <TerminalIcon />
-          {agyRunning ? "Testing Antigravity..." : "Test Agy"}
-        </Button>
-        <Button onClick={testClaude} disabled={claudeRunning} variant="secondary">
-          <TerminalIcon />
-          {claudeRunning ? "Testing Claude..." : "Test Claude"}
-        </Button>
-      </div>
+      <Button onClick={() => postMessage({ type: "hello", name: "Skynet" })}>
+        Say hello to the extension
+      </Button>
       {reply && <p>{reply}</p>}
-      <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
-        <div className="mb-2 font-sans text-sm font-medium">Codex log</div>
-        {renderLog(logs, "Click Test Codex to stream logs here.")}
-      </div>
-      <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
-        <div className="mb-2 font-sans text-sm font-medium">Agy log</div>
-        {renderLog(agyLogs, "Click Test Agy to stream logs here.")}
-      </div>
-      <div className="w-full rounded-md border bg-muted/30 p-3 font-mono text-xs">
-        <div className="mb-2 font-sans text-sm font-medium">Claude log</div>
-        {renderLog(claudeLogs, "Click Test Claude to stream logs here.")}
-      </div>
+      {CLIS.map((config) => (
+        <CliForm key={config.type} config={config} />
+      ))}
     </div>
   );
 }

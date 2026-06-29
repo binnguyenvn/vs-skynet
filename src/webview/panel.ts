@@ -3,7 +3,7 @@ import { streamAgyTestToWebview } from "../adapters/agy/webview-bridge";
 import { streamClaudeTestToWebview } from "../adapters/claude/webview-bridge";
 import { streamCodexTestToWebview } from "../adapters/codex/webview-bridge";
 import { buildWebviewHtml, nonce } from "./html";
-import type { WebviewToExtension } from "./protocol";
+import type { TestFields, WebviewToExtension } from "./protocol";
 
 export function openWebview(
   context: vscode.ExtensionContext,
@@ -39,17 +39,22 @@ export function openWebview(
         vscode.window.showInformationMessage(`Webview says hello: ${msg.name}`);
         webview.postMessage({ type: "greeting", text: `Hello back, ${msg.name}!` });
       }
+      const cwd = () =>
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
+      // configDir/model/oauthToken map straight onto RunOpts; prune empty strings
+      // so the bridge defaults stay in effect.
+      const clean = (f?: TestFields): Partial<TestFields> =>
+        Object.fromEntries(Object.entries(f ?? {}).filter(([, v]) => v !== ""));
       if (msg.type === "testCodex") {
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
-        void streamCodexTestToWebview(webview, cwd);
+        const { oauthToken: _drop, ...opts } = clean(msg.fields);
+        void streamCodexTestToWebview(webview, cwd(), opts);
       }
       if (msg.type === "testAgy") {
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
-        void streamAgyTestToWebview(webview, cwd);
+        const { oauthToken: _drop, ...opts } = clean(msg.fields);
+        void streamAgyTestToWebview(webview, cwd(), opts);
       }
       if (msg.type === "testClaude") {
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
-        void streamClaudeTestToWebview(webview, cwd);
+        void streamClaudeTestToWebview(webview, cwd(), clean(msg.fields));
       }
     },
     undefined,

@@ -27,6 +27,7 @@ suite("streamCodexTestToWebview", () => {
         },
       },
       "/tmp",
+      {},
       () => ({
         cancel() {},
         result: Promise.resolve(result),
