@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code (claude) Adapter — Refined User Stories</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:20px;margin:0;color:var(--pur)}
+  .sub{color:var(--mut);font-size:14px;margin:4px 0 22px}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .us{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:20px 0}
+  .lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 4px;font-weight:600}
+  ul{padding-left:20px;margin:4px 0} li{margin:3px 0}
+  .in{color:var(--grn)} .out{color:var(--yel)}
+  footer{margin-top:40px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Claude Code (claude) Adapter <span style="color:var(--mut)">— Refined User Stories</span></h1>
+  <p class="sub">Two complete vertical slices · no slicing violations · mirrors the codex/agy adapter split</p>
+
+  <div class="us">
+    <h2>US-1: Claude Code adapter — run a task through <code>claude</code> and get a typed result</h2>
+    <div class="lbl">What it does</div>
+    <p>Lets the rest of the extension run a prompt through the Claude Code CLI and receive a live stream of typed events
+    (start, assistant text, thinking, tool calls, token/cost usage) plus a single clear outcome (succeeded / failed /
+    cancelled), instead of raw terminal JSONL.</p>
+    <div class="lbl">Scope</div>
+    <ul>
+      <li><span class="in">In:</span> the <code>src/adapters/claude/</code> module — event types + JSONL mapper
+      (<code>events.ts</code>), error classifier (<code>classify.ts</code>, copied from codex), and
+      <code>runClaude()</code> (<code>claude-adapter.ts</code>) spawning
+      <code>claude -p --output-format stream-json --verbose</code>. Fast fake-CLI tests + a real-CLI proof gated behind
+      <code>CLAUDE_E2E</code>.</li>
+      <li><span class="out">Out:</span> any UI; multi-turn/resume, <code>--json-schema</code>,
+      <code>--input-format stream-json</code>, images; shared adapter types + shared-classifier extraction.</li>
+    </ul>
+    <div class="lbl">Acceptance</div>
+    <ul>
+      <li>Fake <code>claude</code> emits init + text + <code>result is_error:false</code>, exit 0 → <code>success</code>,
+      <code>started</code>+<code>message</code> streamed, hook noise → <code>unknown</code>, <code>usage</code> carries
+      <code>costUsd</code>.</li>
+      <li><strong>Gotcha:</strong> <code>subtype:"success"</code> with <code>is_error:true</code> ("Not logged in"),
+      exit 0 → <code>failed</code>, <code>errorClass: 'terminal'</code>.</li>
+      <li><code>result</code> text with <code>429</code> → <code>failed</code>, <code>errorClass: 'limit'</code>.</li>
+      <li><code>mapClaudeLine</code> fans an <code>assistant</code> line to
+      <code>message</code>/<code>thinking</code>/<code>tool_call</code>/<code>usage</code>; <code>system/init</code> →
+      <code>started</code>; hook subtypes → <code>unknown</code>; <code>result</code> → <code>usage</code> (with cost).</li>
+      <li><code>CLAUDE_E2E=1 npm test</code>: real reply-pong succeeds (usage present); a cancelled run → <code>cancelled</code>.</li>
+    </ul>
+    <div class="lbl">Tasks</div>
+    <p>Task 1 (event types + JSONL mapper) · Task 2 (classifier) · Task 3 (<code>runClaude</code> + proofs)</p>
+  </div>
+
+  <div class="us">
+    <h2>US-2: Test Claude webview smoke UI — prove the adapter from the panel</h2>
+    <div class="lbl">What it does</div>
+    <p>Adds a <strong>Test Claude</strong> button and a <strong>Claude log</strong> panel to the existing Skynet webview
+    so a developer can click once and watch a real claude run stream its output, tool calls, usage, and final status
+    inside the extension.</p>
+    <div class="lbl">Scope</div>
+    <ul>
+      <li><span class="in">In:</span> the <code>testClaude</code>/<code>claudeLog</code> protocol entries,
+      <code>streamClaudeTestToWebview</code> host bridge, extension-host handler, React button + log panel. Fast bridge
+      unit test (fake run) + manual click-through.</li>
+      <li><span class="out">Out:</span> any production worker/observability panel (smoke test only); changes to the
+      codex/agy buttons.</li>
+    </ul>
+    <div class="lbl">Acceptance</div>
+    <ul>
+      <li>Bridge unit test: fake <code>ClaudeRun</code> (started/thinking/tool_call/message/usage → success) posts exactly
+      <code>Starting Claude test...</code>, <code>started session … (model)</code>, <code>thinking: …</code>,
+      <code>tool …</code>, the text, <code>usage in=… out=… cacheW=… cacheR=… cost=$…</code>, <code>done success</code>.</li>
+      <li>Manual: clicking <strong>Test Claude</strong> streams lines ending in <code>done success</code>; button disables
+      while running, re-enables on done/error.</li>
+      <li><code>npm test</code> stays green (pretest compiles + lints the wiring).</li>
+    </ul>
+    <div class="lbl">Tasks</div>
+    <p>Task 4 (protocol + bridge) · Task 5 (host + React view wiring)</p>
+  </div>
+
+  <footer>Skynet — Harness Engineering · Claude Code (claude) adapter refined user stories</footer>
+</div>
+</body>
+</html>
