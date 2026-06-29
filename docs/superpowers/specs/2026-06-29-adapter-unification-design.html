@@ -98,11 +98,16 @@ export interface WorkerResult {
   usage?: WorkerUsage; lastMessage?: string;
 }
 
-export interface RunOpts {     // unified superset of the three current RunOpts
+export interface RunOpts {     // the COMMON contract; adapters widen it
   prompt: string; cwd: string; model?: string;
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access"; // codex-only; ignored elsewhere
   configDir?: string;          // CODEX_HOME / CLAUDE_CONFIG_DIR / HOME
+  oauthToken?: string;         // claude-only; other adapters ignore it
 }
+// Advanced knobs stay per-adapter (sandbox is a string union in codex but a
+// boolean in agy — can't share one field):
+//   CodexRunOpts  extends RunOpts { sandbox?: "read-only" | "workspace-write" | "danger-full-access" }
+//   ClaudeRunOpts extends RunOpts { permissionMode?; allowedTools? }
+//   AgyRunOpts    extends RunOpts { sandbox?: boolean; skipPermissions? }
 
 export interface WorkerRun extends AsyncIterable&lt;WorkerEvent&gt; {
   cancel(): void;

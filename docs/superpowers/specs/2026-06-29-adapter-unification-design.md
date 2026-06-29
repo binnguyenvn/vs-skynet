@@ -73,13 +73,20 @@ export interface WorkerResult {
   lastMessage?: string;
 }
 
-export interface RunOpts {     // unified superset of the three current RunOpts
+export interface RunOpts {     // the COMMON contract; adapters widen it
   prompt: string;
   cwd: string;
   model?: string;
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access"; // codex-only today; ignored by claude/agy
   configDir?: string;          // CODEX_HOME / CLAUDE_CONFIG_DIR / HOME
+  oauthToken?: string;         // claude-only; other adapters ignore it
 }
+// Advanced per-adapter knobs stay out of the shared type (the smoke UI's
+// TestFields never sets them, and `sandbox` is a string union in codex but a
+// boolean in agy — they can't share one field). Each adapter declares:
+//   interface CodexRunOpts  extends RunOpts { sandbox?: "read-only" | "workspace-write" | "danger-full-access" }
+//   interface ClaudeRunOpts extends RunOpts { permissionMode?: ...; allowedTools?: string[] }
+//   interface AgyRunOpts    extends RunOpts { sandbox?: boolean; skipPermissions?: boolean }
+// runX(opts: <Cli>RunOpts); the AgentAdapter wrapper takes the shared RunOpts.
 
 export interface WorkerRun extends AsyncIterable<WorkerEvent> {
   cancel(): void;
