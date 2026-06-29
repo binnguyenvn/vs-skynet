@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a standalone codex CLI bridge that runs a task via `codex exec --json`, streams typed events, and resolves a terminal status with error classification.
+**Goal:** Build a standalone codex CLI bridge that runs a task via `codex exec --json`, streams typed events, resolves a terminal status with error classification, and exposes a small webview smoke UI where a developer can click **Test Codex** and watch logs stream in the view.
 
-**Architecture:** A small pure parser (`events.ts`) maps codex JSONL lines to a codex-specific `CodexEvent` union; a pure `classifyError` (`classify.ts`) buckets stderr into limit/transport/terminal; `runCodex` (`codex-adapter.ts`) spawns the child, bridges its stdout lines to an async iterator, and resolves a `CodexResult` on close. No shared adapter interface — extracted later once ≥2 adapters exist.
+**Architecture:** A small pure parser (`events.ts`) maps codex JSONL lines to a codex-specific `CodexEvent` union; a pure `classifyError` (`classify.ts`) buckets stderr into limit/transport/terminal; `runCodex` (`codex-adapter.ts`) spawns the child, bridges its stdout lines to an async iterator, and resolves a `CodexResult` on close. A thin `webview-bridge.ts` formats codex events into `codexLog` webview messages for a manual smoke UI. No shared adapter interface — extracted later once ≥2 adapters exist.
 
 **Tech Stack:** TypeScript (Node16 modules, strict), Node `child_process` + `readline`, mocha/`@vscode/test-cli` test runner, `assert`.
 
@@ -13,8 +13,8 @@
 - Verified against `codex-cli 0.142.3`; invocation `codex exec --json --skip-git-repo-check -s <sandbox> -C <cwd> [-m <model>] "<prompt>"`.
 - Child `stdin` MUST be `'ignore'` and the prompt passed as an argv argument — otherwise codex blocks on `"Reading additional input from stdin..."`.
 - Default sandbox is `read-only`.
-- Scope is codex only: NO shared `AgentAdapter`/`WorkerEvent` type, NO fallback/retry, NO step-function panel.
-- New code lives under `src/adapters/codex/`, isolated from `src/webview/`.
+- Scope is codex only: NO shared `AgentAdapter`/`WorkerEvent` type, NO fallback/retry, NO full step-function panel.
+- Core adapter code lives under `src/adapters/codex/`. The only webview changes are the `testCodex`/`codexLog` protocol messages, the `HelloView` Test Codex button/log panel, and message handling in `src/webview/panel.ts`.
 - Tests reuse the existing runner: `*.test.ts` under `src/test/`, compiled to `out/` by `npm run compile-tests`, run with `npm test`.
 - The real-CLI integration test is gated behind `process.env.CODEX_E2E` so `npm test` does not burn quota by default.
 - Relative imports omit the `.js` extension (matches existing `src/test/*.test.ts`).
@@ -417,4 +417,87 @@ Expected: PASS — `happy path` resolves `status:'success'` with usage and a `po
 ```bash
 git add src/adapters/codex/codex-adapter.ts src/test/codex-adapter.integration.test.ts
 git commit -m "feat: runCodex adapter with streaming events, cancel, and real-CLI proof"
+```
+
+### Task 4: Webview Test Codex smoke UI + in-view log
+
+**Files:**
+- Create: `src/adapters/codex/webview-bridge.ts`
+- Test: `src/test/codex-webview-bridge.test.ts`
+- Update: `src/webview/protocol.ts`
+- Update: `src/webview/panel.ts`
+- Update: `src/integration/hello.tsx`
+
+**Interfaces:**
+- Consumes: `runCodex`, `CodexEvent`, `CodexResult` from the codex adapter.
+- Produces:
+  - Webview → extension message: `{ type:"testCodex" }`
+  - Extension → webview message: `{ type:"codexLog"; level:"info"|"error"; text:string }`
+  - `function streamCodexTestToWebview(webview, cwd, runner = runCodex): Promise<void>`
+
+- [ ] **Step 1: Write the failing bridge test**
+
+Create `src/test/codex-webview-bridge.test.ts` with a fake `CodexRun` that yields
+`started`, `message`, and `usage` events, resolves `status:"success"`, and asserts
+the fake webview receives:
+
+```ts
+[
+  { type: "codexLog", level: "info", text: "Starting Codex test..." },
+  { type: "codexLog", level: "info", text: "started thread abc" },
+  { type: "codexLog", level: "info", text: "pong" },
+  { type: "codexLog", level: "info", text: "usage input=1 cached=0 output=2 reasoning=0" },
+  { type: "codexLog", level: "info", text: "done success" },
+]
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm run compile-tests`
+Expected: FAIL — `Cannot find module '../adapters/codex/webview-bridge'`.
+
+- [ ] **Step 3: Write minimal bridge + protocol**
+
+Update `src/webview/protocol.ts` to add `testCodex` and `codexLog`.
+
+Create `src/adapters/codex/webview-bridge.ts`:
+- post `Starting Codex test...`
+- call `runner({ prompt: "Reply with exactly the word: pong", cwd })`
+- format events:
+  - `started` → `started thread <threadId>`
+  - `message` → message text
+  - `usage` → `usage input=<n> cached=<n> output=<n> reasoning=<n>`
+  - `unknown` → ignored
+- after iteration, await `run.result`
+- post `done success` for success, otherwise post an error-level `done <status>: <reason>`
+
+- [ ] **Step 4: Run tests to verify bridge passes**
+
+Run: `npm test`
+Expected: PASS — bridge test green; real Codex tests still pending unless `CODEX_E2E=1`.
+
+- [ ] **Step 5: Wire extension host and webview UI**
+
+Update `src/webview/panel.ts`:
+- when receiving `{ type:"testCodex" }`, choose cwd from the first workspace folder
+  or `context.extensionUri.fsPath`
+- call `streamCodexTestToWebview(webview, cwd)` without awaiting in the message handler
+
+Update `src/integration/hello.tsx`:
+- add a **Test Codex** button with a terminal icon
+- disable the button while the test is running
+- send `{ type:"testCodex" }` on click
+- render received `codexLog` messages in a `Codex log` panel inside the webview
+- mark the run idle when a log line starts with `done ` or has `level:"error"`
+
+- [ ] **Step 6: Run verification**
+
+Run: `npm test`
+Expected: PASS — includes `streamCodexTestToWebview`; no real Codex CLI call in normal tests.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/adapters/codex/webview-bridge.ts src/test/codex-webview-bridge.test.ts src/webview/protocol.ts src/webview/panel.ts src/integration/hello.tsx
+git commit -m "feat: show codex test logs in webview"
 ```

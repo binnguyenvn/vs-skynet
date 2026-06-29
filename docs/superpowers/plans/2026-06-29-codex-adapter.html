@@ -37,7 +37,7 @@
 <div class="wrap">
 
   <h1>Codex Adapter <span class="mut">— Implementation Plan</span></h1>
-  <p class="sub">Standalone codex CLI bridge: spawn <code>codex exec --json</code>, stream typed events, resolve a terminal status with error classification.</p>
+  <p class="sub">Standalone codex CLI bridge: spawn <code>codex exec --json</code>, stream typed events, resolve a terminal status with error classification, and expose a small webview smoke UI.</p>
   <div class="tags">
     <span class="tag">2026-06-29</span>
     <span class="tag">TDD · frequent commits</span>
@@ -48,8 +48,9 @@
   <ul>
     <li>Verified against <code>codex-cli 0.142.3</code>; invocation <code>codex exec --json --skip-git-repo-check -s &lt;sandbox&gt; -C &lt;cwd&gt; [-m &lt;model&gt;] "&lt;prompt&gt;"</code>.</li>
     <li>Child <code>stdin</code> MUST be <code>'ignore'</code> + prompt as argv — else codex blocks on the stdin notice.</li>
-    <li>Default sandbox <code>read-only</code>. Codex only: no shared type, no fallback, no panel.</li>
-    <li>Code under <code>src/adapters/codex/</code>; tests under <code>src/test/</code> via the existing runner.</li>
+    <li>Default sandbox <code>read-only</code>. Codex only: no shared type, no fallback, no full step-function panel.</li>
+    <li>Core adapter code under <code>src/adapters/codex/</code>; the only webview changes are <code>testCodex</code>/<code>codexLog</code>, the HelloView button/log panel, and panel message handling.</li>
+    <li>Tests under <code>src/test/</code> via the existing runner.</li>
     <li>Real-CLI test gated behind <code>CODEX_E2E</code> so <code>npm test</code> doesn't burn quota.</li>
   </ul>
 
@@ -94,6 +95,22 @@
       <li>Implement <code>runCodex</code>: spawn, readline→event queue→async iterator, stderr buffer, settle on close</li>
       <li><code>npm test</code> → unit suites green, integration pending</li>
       <li><code>CODEX_E2E=1 npm test</code> → real-CLI proof green</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 4 — Webview Test Codex smoke UI + in-view log</h3>
+    <div class="files">Create <code>src/adapters/codex/webview-bridge.ts</code> · Test <code>src/test/codex-webview-bridge.test.ts</code> · Update <code>src/webview/protocol.ts</code>, <code>src/webview/panel.ts</code>, <code>src/integration/hello.tsx</code></div>
+    <div class="mut">Produces <code>testCodex</code> webview message, <code>codexLog</code> response messages, and <code>streamCodexTestToWebview()</code>.</div>
+    <ul class="steps">
+      <li>Write failing bridge test with fake <code>CodexRun</code> and expected log messages</li>
+      <li>Compile → fails (bridge module missing)</li>
+      <li>Implement protocol + bridge formatting for started/message/usage/final result</li>
+      <li><code>npm test</code> → bridge test green without real Codex CLI quota</li>
+      <li>Wire <code>panel.ts</code> to handle <code>testCodex</code> and stream logs back to the webview</li>
+      <li>Add HelloView <b>Test Codex</b> button and <code>Codex log</code> panel</li>
+      <li><code>npm test</code> → green</li>
       <li>Commit</li>
     </ul>
   </div>

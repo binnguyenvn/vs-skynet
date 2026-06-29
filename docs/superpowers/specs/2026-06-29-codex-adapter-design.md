@@ -17,7 +17,9 @@ a later US once ≥2 real adapters exist and the genuine commonality is visible.
 Premature abstraction from one example is the thing we're avoiding.
 
 Scope is **codex only**. No fallback/retry (Decision A in the vision), no
-step-function panel (subsystem 2), no shared types.
+step-function panel (subsystem 2), no shared types. A small webview smoke UI is
+included only to manually prove the adapter stream in the existing extension
+surface; it is not the future observability subsystem.
 
 ## Verified ground truth (real CLI)
 
@@ -46,7 +48,9 @@ plain-text stdout scraping (fragile).
 
 ## Public shape (concrete, codex-specific)
 
-New directory `src/adapters/codex/`, isolated from the webview.
+Core adapter code lives in `src/adapters/codex/`. The adapter stays concrete and
+codex-specific; the only webview-facing addition is a thin bridge that formats
+codex events as log messages for a manual smoke test.
 
 ```ts
 // events.ts — normalized from codex JSONL, codex-specific (not shared)
@@ -83,6 +87,26 @@ function runCodex(opts: RunOpts): CodexRun;
 
 `unknown{raw}` keeps the adapter forward-compatible: a codex event type we don't
 model yet surfaces as `unknown` instead of crashing the parser.
+
+## Webview smoke UI
+
+The existing `hello` webview includes a manual **Test Codex** button and a small
+`Codex log` panel. This is a developer-facing smoke test, not a production
+worker panel.
+
+Message flow:
+
+1. Webview sends `{ type: "testCodex" }`.
+2. Extension host handles the message in `openWebview`, runs
+   `streamCodexTestToWebview(webview, cwd)`.
+3. The bridge calls `runCodex({ prompt: "Reply with exactly the word: pong", cwd })`.
+4. Each `CodexEvent` is formatted to `{ type: "codexLog", level, text }` and
+   posted back to the webview.
+5. `HelloView` appends each log line to the `Codex log` panel and disables the
+   button while the run is active.
+
+The bridge is deliberately tiny and tested with a fake `CodexRun` so normal
+`npm test` does not invoke the real CLI or consume quota.
 
 ## Data flow
 
@@ -129,6 +153,9 @@ No step-function panel yet, so proof is a **real integration test** (the existin
   → `result.status==='cancelled'`.
 - **classify** *(pure, fast)*: `classifyError` returns `limit`/`transport`/
   `terminal` for representative stderr strings.
+- **webview smoke bridge** *(pure/fake, fast)*:
+  `streamCodexTestToWebview` posts `Starting Codex test...`, formatted event
+  lines, and a final `done success`/error line to the webview protocol.
 
 Real-CLI tests are marked slow and may consume codex quota.
 
@@ -136,5 +163,6 @@ Real-CLI tests are marked slow and may consume codex quota.
 
 - Shared `AgentAdapter` interface / normalized `WorkerEvent` (later US, after ≥2 adapters).
 - Fallback/retry/AgentPool (Decision A — Orchestrator/Phase 2).
-- Step-function panel and observability (subsystem 2).
+- Full step-function panel and observability (subsystem 2). The Test Codex
+  button is only a smoke UI for this adapter.
 - Soul injection, multi-turn/resume, images, output-schema (later USs).

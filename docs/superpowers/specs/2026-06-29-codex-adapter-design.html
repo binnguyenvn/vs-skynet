@@ -54,7 +54,9 @@
     type yet — that abstraction is extracted in a later US once ≥2 real adapters exist and the genuine
     commonality is visible. Premature abstraction from one example is what we're avoiding.
   </div>
-  <p class="mut">Scope is <b>codex only</b>. No fallback/retry (Decision A), no step-function panel (subsystem 2), no shared types.</p>
+  <p class="mut">Scope is <b>codex only</b>. No fallback/retry (Decision A), no step-function panel
+     (subsystem 2), no shared types. A small webview smoke UI is included only to manually prove
+     the adapter stream in the existing extension surface.</p>
 
   <h2>Verified ground truth (real CLI)</h2>
   <p><code>codex-cli 0.142.3</code>. The adapter drives the non-interactive path:</p>
@@ -73,7 +75,9 @@
      <code>app-server</code>/<code>mcp-server</code> (experimental, heavier) and plain-text stdout scraping (fragile).</p>
 
   <h2>Public shape (concrete, codex-specific)</h2>
-  <p>New directory <code>src/adapters/codex/</code>, isolated from the webview.</p>
+  <p>Core adapter code lives in <code>src/adapters/codex/</code>. The adapter stays concrete and
+     codex-specific; the only webview-facing addition is a thin bridge that formats codex events
+     as log messages for a manual smoke test.</p>
   <pre>type CodexEvent =
   | { kind: 'started'; threadId: string }
   | { kind: 'message'; text: string }
@@ -93,6 +97,21 @@ interface CodexRun extends AsyncIterable&lt;CodexEvent&gt; { cancel(): void; res
 function runCodex(opts: RunOpts): CodexRun;</pre>
   <p><code>unknown{raw}</code> keeps the parser forward-compatible: an unmodeled codex event surfaces as
      <code>unknown</code> instead of crashing.</p>
+
+  <h2>Webview smoke UI</h2>
+  <p>The existing <code>hello</code> webview includes a manual <b>Test Codex</b> button and a small
+     <code>Codex log</code> panel. This is a developer-facing smoke test, not a production worker panel.</p>
+  <ol>
+    <li>Webview sends <code>{ type: "testCodex" }</code>.</li>
+    <li>Extension host runs <code>streamCodexTestToWebview(webview, cwd)</code>.</li>
+    <li>The bridge calls <code>runCodex({ prompt: "Reply with exactly the word: pong", cwd })</code>.</li>
+    <li>Each <code>CodexEvent</code> is formatted to <code>{ type: "codexLog", level, text }</code>
+        and posted back to the webview.</li>
+    <li><code>HelloView</code> appends each log line to the <code>Codex log</code> panel and disables
+        the button while the run is active.</li>
+  </ol>
+  <div class="note">The bridge is tested with a fake <code>CodexRun</code> so normal
+     <code>npm test</code> does not invoke the real CLI or consume quota.</div>
 
   <h2>Data flow</h2>
   <ol>
@@ -134,13 +153,16 @@ function runCodex(opts: RunOpts): CodexRun;</pre>
         <code>.cancel()</code> mid-run → <code>status==='cancelled'</code>.</li>
     <li><b>classify</b> <span class="mut">(pure, fast)</span>: <code>classifyError</code> returns the right
         class for representative stderr strings.</li>
+    <li><b>webview smoke bridge</b> <span class="mut">(pure/fake, fast)</span>:
+        <code>streamCodexTestToWebview</code> posts start, event, usage, and final
+        <code>done success</code>/error log lines to the webview protocol.</li>
   </ul>
 
   <h2>Out of scope</h2>
   <ul>
     <li>Shared <code>AgentAdapter</code> / normalized <code>WorkerEvent</code> (later US, after ≥2 adapters).</li>
     <li>Fallback/retry/AgentPool (Decision A — Orchestrator/Phase 2).</li>
-    <li>Step-function panel and observability (subsystem 2).</li>
+    <li>Full step-function panel and observability (subsystem 2). The Test Codex button is only a smoke UI.</li>
     <li>Soul injection, multi-turn/resume, images, output-schema (later USs).</li>
   </ul>
 
