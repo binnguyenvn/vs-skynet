@@ -1,17 +1,17 @@
 import * as assert from "assert";
 import { streamAgyTestToWebview } from "../adapters/agy/webview-bridge";
-import type { AgyEvent, AgyResult } from "../adapters/agy/events";
+import type { WorkerEvent, WorkerResult } from "../adapters/types";
 import type { ExtensionToWebview } from "../webview/protocol";
 
 suite("streamAgyTestToWebview", () => {
   test("posts agy events and final result as webview log messages", async () => {
     const posted: ExtensionToWebview[] = [];
-    const events: AgyEvent[] = [
-      { kind: "started", threadId: "abc" },
+    const events: WorkerEvent[] = [
+      { kind: "started", sessionId: "abc" },
       { kind: "message", text: "pong" },
-      { kind: "tool_call", name: "run_command", args: { cmd: "ls" } },
+      { kind: "tool_call", name: "run_command", input: { cmd: "ls" } },
     ];
-    const result: AgyResult = { status: "success", lastMessage: "pong" };
+    const result: WorkerResult = { status: "success", lastMessage: "pong" };
 
     await streamAgyTestToWebview(
       {

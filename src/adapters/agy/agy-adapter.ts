@@ -1,27 +1,15 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
-import { classifyError } from "./classify";
-import { mapAgyLine, type AgyEvent, type AgyResult } from "./events";
+import { classifyError } from "../classify";
+import { mapAgyLine } from "./events";
+import type { AgentAdapter, RunOpts, WorkerEvent, WorkerResult, WorkerRun } from "../types";
 
-export interface RunOpts {
-  prompt: string;
-  cwd: string;
-  model?: string;
+export interface AgyRunOpts extends RunOpts {
   sandbox?: boolean;
   skipPermissions?: boolean;
-  configDir?: string; // → HOME, isolates the whole home dir per account
 }
 
-/**
- * Async iterator is single-consumer: create one `for await` loop per run.
- * Concurrent iteration shares one internal event queue and is not supported.
- */
-export interface AgyRun extends AsyncIterable<AgyEvent> {
-  cancel(): void;
-  result: Promise<AgyResult>;
-}
-
-export function runAgy(opts: RunOpts): AgyRun {
+export function runAgy(opts: AgyRunOpts): WorkerRun {
   const args = ["--print", opts.prompt];
   if (opts.skipPermissions ?? true) {
     args.push("--dangerously-skip-permissions");
@@ -48,11 +36,11 @@ export function runAgy(opts: RunOpts): AgyRun {
   let cancelled = false;
   const messages: string[] = [];
 
-  const queue: AgyEvent[] = [];
-  let resolveNext: ((r: IteratorResult<AgyEvent>) => void) | null = null;
+  const queue: WorkerEvent[] = [];
+  let resolveNext: ((r: IteratorResult<WorkerEvent>) => void) | null = null;
   let finished = false;
 
-  const emit = (ev: AgyEvent) => {
+  const emit = (ev: WorkerEvent) => {
     if (ev.kind === "message") {
       messages.push(ev.text);
     }
@@ -70,7 +58,7 @@ export function runAgy(opts: RunOpts): AgyRun {
     if (resolveNext) {
       const r = resolveNext;
       resolveNext = null;
-      r({ value: undefined as unknown as AgyEvent, done: true });
+      r({ value: undefined as unknown as WorkerEvent, done: true });
     }
   };
 
@@ -83,7 +71,7 @@ export function runAgy(opts: RunOpts): AgyRun {
   });
 
   let settled = false;
-  const result = new Promise<AgyResult>((resolve) => {
+  const result = new Promise<WorkerResult>((resolve) => {
     const settle = (exitCode: number | null) => {
       if (settled) {
         return;
@@ -113,13 +101,13 @@ export function runAgy(opts: RunOpts): AgyRun {
     child.on("close", (code) => settle(code));
   });
 
-  const iterator: AsyncIterator<AgyEvent> = {
+  const iterator: AsyncIterator<WorkerEvent> = {
     next() {
       if (queue.length) {
         return Promise.resolve({ value: queue.shift()!, done: false });
       }
       if (finished) {
-        return Promise.resolve({ value: undefined as unknown as AgyEvent, done: true });
+        return Promise.resolve({ value: undefined as unknown as WorkerEvent, done: true });
       }
       return new Promise((r) => {
         resolveNext = r;
@@ -138,3 +126,8 @@ export function runAgy(opts: RunOpts): AgyRun {
     },
   };
 }
+
+export const agyAdapter: AgentAdapter = {
+  id: "agy",
+  run: (opts) => runAgy(opts),
+};

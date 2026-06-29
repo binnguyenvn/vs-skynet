@@ -1,29 +1,8 @@
-export interface AgyUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
+import type { WorkerEvent } from "../types";
 
-export type ErrorClass = "limit" | "transport" | "terminal";
-
-export type AgyEvent =
-  | { kind: "started"; threadId: string }
-  | { kind: "message"; text: string }
-  | { kind: "thought"; text: string }
-  | { kind: "tool_call"; name: string; args: unknown }
-  | ({ kind: "usage" } & AgyUsage)
-  | { kind: "unknown"; raw: unknown };
-
-export interface AgyResult {
-  status: "success" | "failed" | "cancelled";
-  reason?: string;
-  errorClass?: ErrorClass;
-  usage?: AgyUsage;
-  lastMessage?: string;
-}
-
-// Map one agy stdout line to an AgyEvent. Today agy prints plain markdown;
+// Map one agy stdout line to a WorkerEvent. Today agy prints plain markdown;
 // structured JSONL branches are for the future SDK sidecar path.
-export function mapAgyLine(line: string): AgyEvent | null {
+export function mapAgyLine(line: string): WorkerEvent | null {
   const trimmed = line.trim();
   if (!trimmed) {
     return null;
@@ -39,11 +18,11 @@ export function mapAgyLine(line: string): AgyEvent | null {
   // ponytail: dormant until agy or a sidecar emits JSONL; keeps the parser swap tiny.
   switch (obj?.type) {
     case "thread.started":
-      return { kind: "started", threadId: String(obj.thread_id ?? "") };
+      return { kind: "started", sessionId: String(obj.thread_id ?? "") };
     case "tool_call":
-      return { kind: "tool_call", name: String(obj.name ?? ""), args: obj.args };
+      return { kind: "tool_call", name: String(obj.name ?? ""), input: obj.args };
     case "thought":
-      return { kind: "thought", text: String(obj.text ?? "") };
+      return { kind: "thinking", text: String(obj.text ?? "") };
     case "usage":
       return { kind: "usage", inputTokens: obj.input_tokens ?? 0, outputTokens: obj.output_tokens ?? 0 };
     default:

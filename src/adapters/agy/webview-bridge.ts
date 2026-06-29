@@ -1,24 +1,24 @@
-import { runAgy, type AgyRun, type RunOpts } from "./agy-adapter";
-import type { AgyEvent } from "./events";
+import { runAgy, type AgyRunOpts } from "./agy-adapter";
+import type { RunOpts, WorkerEvent, WorkerRun } from "../types";
 import type { ExtensionToWebview } from "../../webview/protocol";
 
 interface LogWebview {
   postMessage(msg: ExtensionToWebview): boolean | PromiseLike<boolean>;
 }
 
-type AgyRunner = (opts: RunOpts) => AgyRun;
+type AgyRunner = (opts: AgyRunOpts) => WorkerRun;
 
 async function postLog(webview: LogWebview, level: "info" | "error", text: string): Promise<void> {
   await webview.postMessage({ type: "agyLog", level, text });
 }
 
-function formatEvent(ev: AgyEvent): string | null {
+function formatEvent(ev: WorkerEvent): string | null {
   switch (ev.kind) {
     case "started":
-      return `started thread ${ev.threadId}`;
+      return `started thread ${ev.sessionId}`;
     case "message":
       return ev.text;
-    case "thought":
+    case "thinking":
       return `thinking: ${ev.text}`;
     case "tool_call":
       return `tool ${ev.name}`;
