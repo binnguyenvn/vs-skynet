@@ -1,7 +1,38 @@
 import * as assert from "assert";
+import * as fs from "node:fs/promises";
 import * as os from "os";
+import * as path from "node:path";
 import { runCodex } from "../adapters/codex/codex-adapter";
 import type { CodexEvent } from "../adapters/codex/events";
+
+suite("codex adapter", () => {
+  test("exit 0 without turn.completed fails as incomplete output without terminal classification", async () => {
+    const binDir = await fs.mkdtemp(path.join(os.tmpdir(), "fake-codex-"));
+    const codexPath = path.join(binDir, "codex");
+    await fs.writeFile(
+      codexPath,
+      "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"abc\"}'\nexit 0\n"
+    );
+    await fs.chmod(codexPath, 0o755);
+
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${oldPath ?? ""}`;
+    try {
+      const run = runCodex({ prompt: "ignored", cwd: os.tmpdir() });
+      for await (const _ of run) {
+        // drain events
+      }
+      const result = await run.result;
+
+      assert.strictEqual(result.status, "failed");
+      assert.strictEqual(result.reason, "codex exited successfully without turn.completed");
+      assert.strictEqual(result.errorClass, undefined);
+    } finally {
+      process.env.PATH = oldPath;
+      await fs.rm(binDir, { recursive: true, force: true });
+    }
+  });
+});
 
 const describe = process.env.CODEX_E2E ? suite : suite.skip;
 

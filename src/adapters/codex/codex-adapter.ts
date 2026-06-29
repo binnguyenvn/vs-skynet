@@ -10,6 +10,10 @@ export interface RunOpts {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
 }
 
+/**
+ * Async iterator is single-consumer: create one `for await` loop per run.
+ * Concurrent iteration shares one internal event queue and is not supported.
+ */
 export interface CodexRun extends AsyncIterable<CodexEvent> {
   cancel(): void;
   result: Promise<CodexResult>;
@@ -92,10 +96,13 @@ export function runCodex(opts: RunOpts): CodexRun {
       } else if (exitCode === 0 && sawTurn) {
         resolve({ status: "success", usage, lastMessage });
       } else {
+        const incompleteSuccess = exitCode === 0 && !sawTurn;
         resolve({
           status: "failed",
-          reason: stderr.trim() || `codex exited with code ${exitCode}`,
-          errorClass: classifyError(stderr),
+          reason: incompleteSuccess
+            ? "codex exited successfully without turn.completed"
+            : stderr.trim() || `codex exited with code ${exitCode}`,
+          errorClass: incompleteSuccess ? undefined : classifyError(stderr),
           usage,
           lastMessage,
         });
