@@ -270,8 +270,8 @@
       <p class="lead">Three CLI bridges built first so no single provider's limit can block downstream work. Pure single-responsibility bridges — resilience lives elsewhere.</p>
       <div class="grid">
         <div class="item" data-status="open">
-          <a href="specs/2026-06-29-skynet-vision-design.md" class="t">Codex adapter</a>
-          <div class="d">openai x cli bridge: buildInvocation (argv/env) + parseEvents over real captured JSONL.</div>
+          <a href="specs/2026-06-29-codex-adapter-design.md" class="t">Codex adapter</a>
+          <div class="d">Concrete-first openai x cli bridge: spawn codex exec --json, parse JSONL into codex-specific events, classify errors (limit/transport/terminal). Proven by a real integration test. No shared type yet.</div>
           <span class="badge open">Open</span>
         </div>
         <div class="item" data-status="open">

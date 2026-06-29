@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex Adapter — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Codex Adapter <span class="mut">— Design</span></h1>
+  <p class="sub">Adapters (subsystem 1) · the first, concrete CLI bridge — built and proven on its own.</p>
+  <div class="tags">
+    <span class="tag">2026-06-29</span>
+    <span class="tag">codex-cli 0.142.3</span>
+    <span class="tag">parent: skynet-vision-design</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A standalone, concrete bridge that runs a task through the <b>codex CLI</b> and turns its output
+     into a typed, observable stream with a clear terminal status. This is the <i>first</i> adapter.</p>
+  <div class="note">
+    <b>Bottom-up by decision.</b> Build each CLI adapter concrete and working first (codex → claude → agy).
+    Do <b>not</b> invent a shared <code>AgentAdapter</code> interface or normalized <code>WorkerEvent</code>
+    type yet — that abstraction is extracted in a later US once ≥2 real adapters exist and the genuine
+    commonality is visible. Premature abstraction from one example is what we're avoiding.
+  </div>
+  <p class="mut">Scope is <b>codex only</b>. No fallback/retry (Decision A), no step-function panel (subsystem 2), no shared types.</p>
+
+  <h2>Verified ground truth (real CLI)</h2>
+  <p><code>codex-cli 0.142.3</code>. The adapter drives the non-interactive path:</p>
+  <pre>codex exec --json --skip-git-repo-check -s read-only -C &lt;cwd&gt; [-m &lt;model&gt;] "&lt;prompt&gt;"</pre>
+  <p><code>--json</code> prints events to stdout as JSONL. A real <code>"reply pong"</code> run emitted:</p>
+  <pre>{"type":"thread.started","thread_id":"019f..."}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"pong"}}
+{"type":"turn.completed","usage":{"input_tokens":12406,"cached_input_tokens":9088,"output_tokens":5,"reasoning_output_tokens":0}}</pre>
+  <div class="note warn">
+    <b>Gotcha (observed):</b> when stdin is an open/empty pipe, codex prints
+    <code>"Reading additional input from stdin..."</code> and blocks. The adapter MUST pass the prompt as an
+    argv argument and set the child's <code>stdin</code> to <code>'ignore'</code>.
+  </div>
+  <p><b>Run strategy chosen:</b> spawn <code>codex exec --json</code> and parse JSONL. Rejected —
+     <code>app-server</code>/<code>mcp-server</code> (experimental, heavier) and plain-text stdout scraping (fragile).</p>
+
+  <h2>Public shape (concrete, codex-specific)</h2>
+  <p>New directory <code>src/adapters/codex/</code>, isolated from the webview.</p>
+  <pre>type CodexEvent =
+  | { kind: 'started'; threadId: string }
+  | { kind: 'message'; text: string }
+  | { kind: 'usage'; inputTokens; cachedInputTokens; outputTokens; reasoningOutputTokens }
+  | { kind: 'unknown'; raw: unknown };   // forward-compat for new codex events
+
+type CodexResult = {
+  status: 'success' | 'failed' | 'cancelled';
+  reason?: string;
+  errorClass?: 'limit' | 'transport' | 'terminal';   // when status==='failed'
+  usage?: CodexUsage;
+  lastMessage?: string;
+};
+
+interface RunOpts { prompt; cwd; model?; sandbox? = 'read-only'; }
+interface CodexRun extends AsyncIterable&lt;CodexEvent&gt; { cancel(): void; result: Promise&lt;CodexResult&gt;; }
+function runCodex(opts: RunOpts): CodexRun;</pre>
+  <p><code>unknown{raw}</code> keeps the parser forward-compatible: an unmodeled codex event surfaces as
+     <code>unknown</code> instead of crashing.</p>
+
+  <h2>Data flow</h2>
+  <ol>
+    <li><code>runCodex</code> spawns the child (argv above, <code>stdin:'ignore'</code>, piped stdout/stderr).</li>
+    <li>stdout split on newlines; each line <code>JSON.parse</code>d and mapped:
+        <code>thread.started</code>→<code>started</code>, <code>item.completed</code>(agent_message)→<code>message</code>,
+        <code>turn.completed</code>→<code>usage</code>, else→<code>unknown</code>. Yielded as they arrive.</li>
+    <li>stderr buffered (used only for error classification).</li>
+    <li>On child <code>exit</code>/<code>error</code> the <code>result</code> promise resolves.</li>
+  </ol>
+
+  <h2>Error classification (heuristic — Phase-1 requirement)</h2>
+  <p>Adapters classify failures so a future fallback layer has signal. The adapter does <b>no</b> retry.</p>
+  <table>
+    <tr><th>Condition</th><th>status</th><th>errorClass</th></tr>
+    <tr><td>exit 0 <b>and</b> saw <code>turn.completed</code></td><td>success</td><td>—</td></tr>
+    <tr><td><code>.cancel()</code> was called</td><td>cancelled</td><td>—</td></tr>
+    <tr><td>exit ≠ 0 (or exit 0 without <code>turn.completed</code>)</td><td>failed</td><td>classify ↓</td></tr>
+  </table>
+  <p><code>classifyError(exitCode, stderr)</code> — pure function matching stderr text:</p>
+  <ul>
+    <li><code>/rate.?limit|429|quota|too many requests/i</code> → <code>limit</code></li>
+    <li><code>/network|econn|etimedout|timeout|socket|dns|enotfound/i</code> → <code>transport</code></li>
+    <li>otherwise → <code>terminal</code></li>
+  </ul>
+  <div class="note">
+    <code>// ponytail:</code> heuristic stderr patterns from docs/reason, not from observed limit/transport
+    output (a real 429 can't be induced on demand). Refine the regexes when we capture real stderr.
+  </div>
+
+  <h2>Proof of function (acceptance gate)</h2>
+  <p>No step-function panel yet, so proof is a <b>real integration test</b> (existing
+     <code>vscode-test</code>/mocha) plus a fast unit test for the pure classifier.</p>
+  <ul>
+    <li><b>happy</b> <span class="mut">(real codex, slow/uses quota)</span>:
+        <code>runCodex({prompt:"reply pong"})</code> → a <code>message</code> with <code>pong</code>,
+        <code>status==='success'</code>, <code>usage</code> present.</li>
+    <li><b>cancel</b> <span class="mut">(real codex, slow)</span>: start a longer task,
+        <code>.cancel()</code> mid-run → <code>status==='cancelled'</code>.</li>
+    <li><b>classify</b> <span class="mut">(pure, fast)</span>: <code>classifyError</code> returns the right
+        class for representative stderr strings.</li>
+  </ul>
+
+  <h2>Out of scope</h2>
+  <ul>
+    <li>Shared <code>AgentAdapter</code> / normalized <code>WorkerEvent</code> (later US, after ≥2 adapters).</li>
+    <li>Fallback/retry/AgentPool (Decision A — Orchestrator/Phase 2).</li>
+    <li>Step-function panel and observability (subsystem 2).</li>
+    <li>Soul injection, multi-turn/resume, images, output-schema (later USs).</li>
+  </ul>
+
+  <footer>Spec: docs/superpowers/specs/2026-06-29-codex-adapter-design.md · rendered companion for human readers.</footer>
+</div>
+</body>
+</html>
