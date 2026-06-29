@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import { HelloView } from "@/views/hello";
-import { GalleryView } from "@/views/gallery";
+import { HelloView } from "./hello";
+import { GalleryView } from "./gallery";
 
 declare global {
   interface Window {

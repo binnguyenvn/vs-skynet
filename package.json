@@ -14,16 +14,16 @@
   "contributes": {
     "commands": [
       {
-        "command": "skynet-harness.helloWorld",
-        "title": "Hello World"
+        "command": "skynet-harness.test.helloWorld",
+        "title": "Skynet Test: Hello World"
       },
       {
-        "command": "skynet-harness.openWebview",
-        "title": "Skynet: Open Webview"
+        "command": "skynet-harness.test.openWebview",
+        "title": "Skynet Test: Open Webview"
       },
       {
-        "command": "skynet-harness.openGallery",
-        "title": "Skynet: Open Component Gallery"
+        "command": "skynet-harness.test.openGallery",
+        "title": "Skynet Test: Open Component Gallery"
       }
     ]
   },

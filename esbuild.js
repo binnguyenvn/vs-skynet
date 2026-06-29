@@ -45,7 +45,7 @@ async function main() {
 	});
 
 	const webviewCtx = await esbuild.context({
-		entryPoints: ['src/webview/index.tsx'],
+		entryPoints: ['src/integration/index.tsx'],
 		bundle: true,
 		format: 'iife',
 		minify: production,
