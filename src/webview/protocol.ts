@@ -4,8 +4,10 @@
 export type WebviewToExtension =
   | { type: "ready" }
   | { type: "hello"; name: string }
-  | { type: "testCodex" };
+  | { type: "testCodex" }
+  | { type: "testAgy" };
 
 export type ExtensionToWebview =
   | { type: "greeting"; text: string }
-  | { type: "codexLog"; level: "info" | "error"; text: string };
+  | { type: "codexLog"; level: "info" | "error"; text: string }
+  | { type: "agyLog"; level: "info" | "error"; text: string };
