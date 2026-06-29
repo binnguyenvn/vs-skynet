@@ -3,7 +3,9 @@
 
 export type WebviewToExtension =
   | { type: "ready" }
-  | { type: "hello"; name: string };
+  | { type: "hello"; name: string }
+  | { type: "testCodex" };
 
 export type ExtensionToWebview =
-  | { type: "greeting"; text: string };
+  | { type: "greeting"; text: string }
+  | { type: "codexLog"; level: "info" | "error"; text: string };

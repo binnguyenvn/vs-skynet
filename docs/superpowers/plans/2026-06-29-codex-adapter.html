@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex Adapter — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:36px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 6px;color:var(--acc)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  ul.steps{list-style:none;padding-left:0;margin:8px 0}
+  ul.steps li{margin:5px 0;padding-left:26px;position:relative}
+  ul.steps li:before{content:"\2610";position:absolute;left:0;color:var(--mut);font-size:16px}
+  .files{font-size:13px;color:var(--mut);margin:4px 0 8px}
+  ul{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Codex Adapter <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">Standalone codex CLI bridge: spawn <code>codex exec --json</code>, stream typed events, resolve a terminal status with error classification, and expose a small webview smoke UI.</p>
+  <div class="tags">
+    <span class="tag">2026-06-29</span>
+    <span class="tag">TDD · frequent commits</span>
+    <span class="tag">spec: codex-adapter-design</span>
+  </div>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li>Verified against <code>codex-cli 0.142.3</code>; invocation <code>codex exec --json --skip-git-repo-check -s &lt;sandbox&gt; -C &lt;cwd&gt; [-m &lt;model&gt;] "&lt;prompt&gt;"</code>.</li>
+    <li>Child <code>stdin</code> MUST be <code>'ignore'</code> + prompt as argv — else codex blocks on the stdin notice.</li>
+    <li>Default sandbox <code>read-only</code>. Codex only: no shared type, no fallback, no full step-function panel.</li>
+    <li>Core adapter code under <code>src/adapters/codex/</code>; the only webview changes are <code>testCodex</code>/<code>codexLog</code>, the HelloView button/log panel, and panel message handling.</li>
+    <li>Tests under <code>src/test/</code> via the existing runner.</li>
+    <li>Real-CLI test gated behind <code>CODEX_E2E</code> so <code>npm test</code> doesn't burn quota.</li>
+  </ul>
+
+  <h2>US-1: Codex adapter</h2>
+  <p class="mut">Call <code>runCodex({prompt, cwd})</code>, iterate typed events, await a <code>CodexResult</code>
+     with success/failed/cancelled (failures classified). Proven by deterministic parser/classifier unit tests
+     plus an opt-in real-CLI integration test.</p>
+
+  <div class="card">
+    <h3>Task 1 — Event types + JSONL line parser</h3>
+    <div class="files">Create <code>src/adapters/codex/events.ts</code> · Test <code>src/test/codex-events.test.ts</code></div>
+    <div class="mut">Produces <code>CodexEvent</code>, <code>CodexResult</code>, <code>CodexUsage</code>, <code>ErrorClass</code>, <code>mapCodexLine()</code>.</div>
+    <ul class="steps">
+      <li>Write failing test (6 cases incl. blank/non-JSON → null, unknown → <code>unknown{raw}</code>)</li>
+      <li>Compile → fails (module missing)</li>
+      <li>Implement types + <code>mapCodexLine</code></li>
+      <li><code>npm test</code> → green</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 2 — Error classifier</h3>
+    <div class="files">Create <code>src/adapters/codex/classify.ts</code> · Test <code>src/test/codex-classify.test.ts</code></div>
+    <div class="mut">Produces <code>classifyError(stderr): ErrorClass</code> (limit/transport/terminal).</div>
+    <ul class="steps">
+      <li>Write failing test (429/quota→limit, econn/timeout→transport, else→terminal)</li>
+      <li>Compile → fails (module missing)</li>
+      <li>Implement regex classifier (ponytail: refine on real stderr)</li>
+      <li><code>npm test</code> → green</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 3 — runCodex adapter + real-CLI proof</h3>
+    <div class="files">Create <code>src/adapters/codex/codex-adapter.ts</code> · Test <code>src/test/codex-adapter.integration.test.ts</code></div>
+    <div class="mut">Produces <code>RunOpts</code>, <code>CodexRun</code> (AsyncIterable + <code>cancel()</code> + <code>result</code>), <code>runCodex()</code>.</div>
+    <ul class="steps">
+      <li>Write failing integration test (happy → success+usage+pong; cancel → cancelled), gated by <code>CODEX_E2E</code></li>
+      <li>Compile → fails (module missing)</li>
+      <li>Implement <code>runCodex</code>: spawn, readline→event queue→async iterator, stderr buffer, settle on close</li>
+      <li><code>npm test</code> → unit suites green, integration pending</li>
+      <li><code>CODEX_E2E=1 npm test</code> → real-CLI proof green</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 4 — Webview Test Codex smoke UI + in-view log</h3>
+    <div class="files">Create <code>src/adapters/codex/webview-bridge.ts</code> · Test <code>src/test/codex-webview-bridge.test.ts</code> · Update <code>src/webview/protocol.ts</code>, <code>src/webview/panel.ts</code>, <code>src/integration/hello.tsx</code></div>
+    <div class="mut">Produces <code>testCodex</code> webview message, <code>codexLog</code> response messages, and <code>streamCodexTestToWebview()</code>.</div>
+    <ul class="steps">
+      <li>Write failing bridge test with fake <code>CodexRun</code> and expected log messages</li>
+      <li>Compile → fails (bridge module missing)</li>
+      <li>Implement protocol + bridge formatting for started/message/usage/final result</li>
+      <li><code>npm test</code> → bridge test green without real Codex CLI quota</li>
+      <li>Wire <code>panel.ts</code> to handle <code>testCodex</code> and stream logs back to the webview</li>
+      <li>Add HelloView <b>Test Codex</b> button and <code>Codex log</code> panel</li>
+      <li><code>npm test</code> → green</li>
+      <li>Commit</li>
+    </ul>
+  </div>
+
+  <div class="note">Full code for every step lives in the markdown plan
+     (<code>docs/superpowers/plans/2026-06-29-codex-adapter.md</code>) — the source of truth.</div>
+
+  <footer>Implementation plan companion · rendered for human readers.</footer>
+</div>
+</body>
+</html>

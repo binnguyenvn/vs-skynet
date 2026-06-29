@@ -5,12 +5,12 @@
     "epic": "Adapters",
     "feature": "Codex adapter",
     "title": "Codex adapter",
-    "description": "openai x cli bridge: buildInvocation (argv/env) + parseEvents over real captured JSONL.",
-    "status": "open",
-    "spec": "specs/2026-06-29-skynet-vision-design.md",
-    "plan": null,
+    "description": "Concrete-first openai x cli bridge: spawn codex exec --json, parse JSONL into codex-specific events, classify errors (limit/transport/terminal). Proven by a real integration test. No shared type yet.",
+    "status": "released",
+    "spec": "specs/2026-06-29-codex-adapter-design.md",
+    "plan": "plans/2026-06-29-codex-adapter.md",
     "created": "2026-06-29",
-    "completed": null
+    "completed": "2026-06-29"
   },
   {
     "slug": "adapters--claude",
