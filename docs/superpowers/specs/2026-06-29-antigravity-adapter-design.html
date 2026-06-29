@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antigravity (agy) Adapter — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Antigravity (agy) Adapter <span class="mut">— Design</span></h1>
+  <p class="sub">2026-06-29 · Epic: Adapters (subsystem 1) · Feature/US: Antigravity (agy) adapter</p>
+  <div class="tags">
+    <span class="tag">Parent: skynet-vision</span>
+    <span class="tag">Mirrors: codex-adapter</span>
+    <span class="tag">Phase 1 — MVP</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A standalone, concrete bridge that runs a task through the <strong>antigravity CLI (<code>agy</code>)</strong>
+  and turns its output into a typed, observable stream with a clear terminal status. Second adapter after codex,
+  built and proven on its own.</p>
+  <p><strong>Bottom-up by decision:</strong> still no shared <code>AgentAdapter</code> interface or normalized
+  <code>WorkerEvent</code> type. The adapter stays concrete and agy-specific. The genuine commonality now visible
+  across codex + agy (notably <code>classifyError</code>) is noted as an extraction trigger, but the extraction
+  itself is a later US.</p>
+  <p>Scope is <strong>agy only</strong>, via its non-interactive <code>--print</code> mode. No fallback/retry
+  (Decision A), no step-function panel (subsystem 2), no shared types. A small webview smoke UI mirrors the codex
+  one to manually prove the stream.</p>
+
+  <h2>Verified ground truth (real CLI)</h2>
+  <p><code>agy 1.0.13</code>. The adapter drives the non-interactive path:</p>
+  <pre>agy --print --dangerously-skip-permissions --sandbox [--model &lt;m&gt;] --add-dir &lt;cwd&gt; "&lt;prompt&gt;"</pre>
+  <p><code>--print</code> (alias <code>-p</code>) runs a single prompt non-interactively and prints the agent's
+  <strong>final response as plain markdown text</strong> to stdout, then exits 0. A real <code>"reply pong"</code>-style
+  run produced multi-paragraph markdown on stdout and exit code 0; stderr carried only an informational
+  <code>Shell cwd was reset to &lt;dir&gt;</code> line.</p>
+  <div class="note warn"><strong>Key divergence from codex:</strong> there is <strong>no <code>--json</code> /
+  <code>--output-format</code></strong>. agy emits <em>plain text only</em> — no JSONL, no per-event stream, no token
+  usage, no thread id. The rich codex event model (<code>thread.started</code> / <code>item.completed</code> /
+  <code>turn.completed</code>) has no equivalent on this surface.</div>
+  <p><strong>Flags (verified via <code>agy --help</code>):</strong></p>
+  <ul>
+    <li>No <code>-C</code>/cwd flag → the adapter sets the child's working directory via the spawn <code>cwd</code>
+    option and passes <code>--add-dir &lt;cwd&gt;</code> so the workspace root is explicit.</li>
+    <li><code>--dangerously-skip-permissions</code> — auto-approves tool requests. <strong>Mandatory headless</strong>,
+    or the agent blocks waiting for interactive approval.</li>
+    <li><code>--sandbox</code> — restricts terminal/FS access. Default on (the agy analog of codex's <code>read-only</code>).</li>
+    <li><code>--model</code> selects the model. <code>--print-timeout</code> defaults to 5m.</li>
+  </ul>
+  <p><strong>Run strategy chosen:</strong> spawn <code>agy --print</code> and read plain-text stdout. Rejected —
+  scraping the glog CLI debug log (fragile internal Go gRPC server logs) and the on-disk <code>brain/&lt;uuid&gt;/</code>
+  conversation store (undocumented internal state).</p>
+
+  <h2>Capability gap and the chosen path</h2>
+  <p>The codex template is "spawn child → parse JSONL → typed events incl. usage." agy's <code>--print</code> cannot
+  produce that. Research surfaced one path that <em>can</em> — the official <strong>Python SDK
+  <code>google-antigravity</code></strong> (<code>pip install google-antigravity</code>), which streams response
+  tokens, <code>response.thoughts</code> (reasoning deltas), and strongly-typed <code>response.tool_calls</code>.</p>
+  <div class="note good"><strong>Decision: ship the <code>--print</code> pure-TS adapter now; do not pull in Python
+  yet.</strong> YAGNI — Phase-1 acceptance and the smoke UI only need "run a task, get text, classify failure." Adding
+  a Python runtime dependency to a TypeScript VSCode extension to populate observability that doesn't exist yet is the
+  premature build the vision warns against. The SDK is recorded as the documented upgrade path, and the event types are
+  shaped now so that swap is a backend change, not a redesign.</div>
+
+  <h2>Public shape (concrete, agy-specific)</h2>
+  <p>Core adapter code lives in <code>src/adapters/agy/</code>, mirroring <code>src/adapters/codex/</code>. The event
+  type carries the <strong>full target shape now</strong> — including <code>thought</code> and <code>tool_call</code>
+  kinds the SDK path will populate — even though <code>--print</code> only ever emits <code>message</code>. This matches
+  codex's forward-compatible <code>unknown</code> philosophy: model the events ahead of the backend that fills them.</p>
+  <pre>interface AgyUsage {        // STUB shape; never populated by --print today.
+  inputTokens: number;
+  outputTokens: number;
+}
+
+type AgyEvent =
+  | { kind: 'started'; threadId: string }               // STUB: --print emits no thread id. TODO (SDK)
+  | { kind: 'message'; text: string }                    // REAL: a line of stdout
+  | { kind: 'thought'; text: string }                    // STUB: SDK response.thoughts. TODO
+  | { kind: 'tool_call'; name: string; args: unknown }   // STUB: SDK response.tool_calls. TODO
+  | ({ kind: 'usage' } &amp; AgyUsage)                       // STUB: SDK / `/usage`. TODO
+  | { kind: 'unknown'; raw: unknown };                   // forward-compat for future agy output
+
+interface AgyResult {
+  status: 'success' | 'failed' | 'cancelled';
+  reason?: string;
+  errorClass?: 'limit' | 'transport' | 'terminal';
+  usage?: AgyUsage;           // always undefined today (stub)
+  lastMessage?: string;       // accumulated stdout text
+}
+
+interface RunOpts {
+  prompt: string;
+  cwd: string;
+  model?: string;
+  sandbox?: boolean;          // default true  → passes --sandbox
+  skipPermissions?: boolean;  // default true  → passes --dangerously-skip-permissions
+}
+
+interface AgyRun extends AsyncIterable&lt;AgyEvent&gt; {
+  cancel(): void;
+  result: Promise&lt;AgyResult&gt;;
+}
+
+function runAgy(opts: RunOpts): AgyRun;</pre>
+  <p>The async-iterator plumbing (queue + <code>resolveNext</code> + <code>finishIter</code>) is copied from
+  <code>codex-adapter.ts</code> verbatim — single-consumer, one <code>for await</code> per run.</p>
+
+  <h2>Webview smoke UI</h2>
+  <p>The existing <code>hello</code> webview gains a manual <strong>Test Agy</strong> button and a small
+  <code>Agy log</code> panel, alongside (not replacing) the codex ones. Developer-facing smoke test.</p>
+  <ol>
+    <li>Webview sends <code>{ type: "testAgy" }</code>.</li>
+    <li>Extension host runs <code>streamAgyTestToWebview(webview, cwd)</code> in <code>openWebview</code>.</li>
+    <li>The bridge calls <code>runAgy({ prompt: "Reply with exactly the word: pong", cwd })</code>.</li>
+    <li>Each <code>AgyEvent</code> → <code>{ type: "agyLog", level, text }</code> posted back.</li>
+    <li><code>HelloView</code> appends each line to the <code>Agy log</code> panel; button disabled during the run.</li>
+  </ol>
+  <p>The bridge is tiny and tested with a fake <code>AgyRun</code>, so <code>npm test</code> never invokes the real CLI
+  or consumes quota.</p>
+
+  <h2>Data flow</h2>
+  <ol>
+    <li><code>runAgy</code> spawns the child with the argv above, <code>{ cwd: opts.cwd, stdio: ['ignore','pipe','pipe'] }</code>.
+    stdin <code>'ignore'</code> mirrors codex's anti-block discipline.</li>
+    <li>stdout split on newlines via <code>readline</code>; each non-empty line → <code>mapAgyLine</code>; events yielded
+    from the async iterator as they arrive.</li>
+    <li>stderr buffered (used only for error classification).</li>
+    <li>On child <code>exit</code>/<code>error</code> the <code>result</code> promise resolves (see status rules).</li>
+  </ol>
+  <h3>mapAgyLine — codex-shaped, stubbed</h3>
+  <pre>// Today agy prints plain markdown → every non-blank line becomes a `message`.
+// The JSON branch is a forward-compat STUB: if a future agy (or the SDK sidecar)
+// emits structured JSONL, these branches light up without a parser rewrite.
+function mapAgyLine(line: string): AgyEvent | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let obj: any;
+  try { obj = JSON.parse(trimmed); }
+  catch { return { kind: 'message', text: trimmed }; }   // ← the only path hit today
+  switch (obj?.type) {
+    case 'thread.started': return { kind: 'started', threadId: String(obj.thread_id ?? '') };
+    case 'tool_call':      return { kind: 'tool_call', name: String(obj.name ?? ''), args: obj.args };
+    case 'thought':        return { kind: 'thought', text: String(obj.text ?? '') };
+    case 'usage':          return { kind: 'usage', inputTokens: obj.input_tokens ?? 0, outputTokens: obj.output_tokens ?? 0 };
+    default:               return { kind: 'unknown', raw: obj };
+  }
+}</pre>
+
+  <h2>Status rules</h2>
+  <table>
+    <tr><th>Condition</th><th>status</th><th>errorClass</th></tr>
+    <tr><td><code>.cancel()</code> was called</td><td><code>cancelled</code></td><td>—</td></tr>
+    <tr><td>exit 0</td><td><code>success</code></td><td>—</td></tr>
+    <tr><td>exit ≠ 0</td><td><code>failed</code></td><td>classify ↓</td></tr>
+  </table>
+  <div class="note"><code>ponytail:</code> agy has no <code>turn.completed</code> equivalent, so success = clean exit
+  (0). Codex requires both exit 0 AND a turn marker; agy can't give the marker today. When the SDK path lands, require
+  a real completion signal before success.</div>
+
+  <h2>Error classification (heuristic — Phase-1 requirement)</h2>
+  <p><code>classifyError(stderr) → 'limit' | 'transport' | 'terminal'</code> is <strong>copied verbatim from
+  <code>src/adapters/codex/classify.ts</code></strong> (rate-limit/429 → <code>limit</code>; network/timeout/dns →
+  <code>transport</code>; else <code>terminal</code>). The adapter does <strong>no</strong> retry.</p>
+  <div class="note warn"><code>ponytail:</code> <code>classify.ts</code> is now duplicated across codex + agy. This is
+  the second consumer — the explicit trigger to extract a shared classifier in the "Error classification" US. Not
+  extracted here, to keep this adapter standalone. The heuristic regexes remain unverified against real agy
+  limit/transport output; refine on first capture.</div>
+
+  <h2>Documented upgrade path (SDK sidecar)</h2>
+  <p>When subsystem 2 needs tool steps, thoughts, or token usage from agy:</p>
+  <ul>
+    <li>Replace the spawned child <code>agy --print …</code> with a small Python helper using
+    <code>google-antigravity</code> that emits <strong>JSONL</strong> (<code>thread.started</code>,
+    <code>tool_call</code>, <code>thought</code>, <code>usage</code>, final <code>message</code>) to stdout.</li>
+    <li><code>mapAgyLine</code>'s dormant JSON branches already map that JSONL.</li>
+    <li><code>AgyEvent</code> already carries <code>started</code> / <code>thought</code> / <code>tool_call</code> /
+    <code>usage</code>.</li>
+  </ul>
+  <p>So the change is: swap the spawn target + ship the Python script. The adapter's public shape and all consumers
+  stay put. This sidecar is <strong>out of scope for this US</strong>.</p>
+
+  <h2>Proof of function (acceptance gate)</h2>
+  <ul>
+    <li><strong>happy</strong> <span class="mut">(real agy, slow/uses quota)</span>: <code>runAgy({prompt:"reply pong"})</code>
+    → a <code>message</code> whose text contains <code>pong</code>, <code>result.status==='success'</code>.</li>
+    <li><strong>cancel</strong> <span class="mut">(real agy, slow)</span>: start a longer task, <code>.cancel()</code>
+    mid-run → <code>result.status==='cancelled'</code>.</li>
+    <li><strong>classify</strong> <span class="mut">(pure, fast)</span>: <code>classifyError</code> returns
+    <code>limit</code>/<code>transport</code>/<code>terminal</code> for representative stderr.</li>
+    <li><strong>mapAgyLine</strong> <span class="mut">(pure, fast)</span>: plain line → <code>message</code>; stub JSONL
+    <code>tool_call</code>/<code>thread.started</code> → matching structured kind — locks the forward-compat path before
+    the SDK swap ships.</li>
+    <li><strong>webview smoke bridge</strong> <span class="mut">(pure/fake, fast)</span>:
+    <code>streamAgyTestToWebview</code> posts a start line, formatted event lines, and a final done/error line.</li>
+  </ul>
+
+  <h2>Out of scope</h2>
+  <ul>
+    <li>Shared <code>AgentAdapter</code> interface / normalized <code>WorkerEvent</code> (later US).</li>
+    <li>Shared <code>classifyError</code> extraction (its own US; this adapter is the trigger).</li>
+    <li>The Python <code>google-antigravity</code> SDK sidecar (the documented upgrade path above).</li>
+    <li>Fallback/retry/AgentPool (Decision A — Orchestrator/Phase 2).</li>
+    <li>Full step-function panel and observability (subsystem 2).</li>
+    <li>Soul injection, multi-turn/resume (<code>--continue</code>/<code>--conversation</code>), images.</li>
+  </ul>
+
+  <footer>Skynet — Harness Engineering · Antigravity (agy) adapter design · mirrors the codex adapter</footer>
+</div>
+</body>
+</html>
