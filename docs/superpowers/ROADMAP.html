@@ -274,10 +274,10 @@
           <div class="d">Concrete-first openai x cli bridge: spawn codex exec --json, parse JSONL into codex-specific events, classify errors (limit/transport/terminal). Proven by a real integration test. No shared type yet.</div>
           <span class="badge released">Released</span>
         </div>
-        <div class="item" data-status="open">
+        <div class="item" data-status="released">
           <a href="specs/2026-06-29-claude-adapter-design.md" class="t">Claude Code adapter</a>
           <div class="d">anthropic x cli bridge. Verified claude 2.1.195: spawn claude -p --output-format stream-json --verbose, parse JSONL into the richest event set of the three (real text/thinking/tool_use + cache-token usage + cost). Success gated on result.is_error===false (subtype lies); skips hook noise. Mirrors codex; 3rd classifyError consumer.</div>
-          <span class="badge open">Open</span>
+          <span class="badge released">Released</span>
         </div>
         <div class="item" data-status="open">
           <a href="specs/2026-06-29-antigravity-adapter-design.md" class="t">Antigravity (agy) adapter</a>
