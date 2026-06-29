@@ -23,10 +23,20 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(disposable);
 
 	const openPanel = vscode.commands.registerCommand("skynet-harness.test.openWebview", () => {
-		openWebview(context, "hello");
+		const panel = openWebview(context, "hello");
+		return {
+			title: panel.title,
+			visible: panel.visible,
+			htmlHasHelloState: panel.webview.html.includes('"viewId":"hello"'),
+		};
 	});
 	const openGallery = vscode.commands.registerCommand("skynet-harness.test.openGallery", () => {
-		openWebview(context, "gallery");
+		const panel = openWebview(context, "gallery");
+		return {
+			title: panel.title,
+			visible: panel.visible,
+			htmlHasGalleryState: panel.webview.html.includes('"viewId":"gallery"'),
+		};
 	});
 	context.subscriptions.push(openPanel, openGallery);
 }
