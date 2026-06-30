@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Codex Adapter — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Codex Adapter <span class="mut">— Design (canonical frame)</span></h1>
+  <p class="sub">Adapters · a second run mode that drives <code>codex</code> as a live interactive TUI in a VSCode terminal.</p>
+  <div class="tags">
+    <span class="tag">2026-06-30</span>
+    <span class="tag">codex (Rust/ratatui TUI)</span>
+    <span class="tag">parent: skynet-vision-design</span>
+    <span class="tag">frame for: claude · agy interactive</span>
+  </div>
+
+  <h2>Goal</h2>
+  <p>A <b>second run mode</b> for the codex adapter that drives <code>codex</code> as a <b>live interactive
+     TUI session inside a VSCode terminal</b>, instead of the one-shot <code>codex exec --json</code> path.
+     The orchestrator pastes prompts <i>into</i> the terminal and reads results <i>out</i> of files the agent
+     writes. This buys <b>multi-turn steering (paused/resumed turns toward one task completion) + pause/resume
+     in one session</b> and a human-like execution surface, while keeping parsing robust.</p>
+  <div class="note good">
+    <b>Canonical frame.</b> The claude and agy interactive specs are skeletons that only restate their
+    CLI-specific deltas against this one.
+  </div>
+  <div class="note">
+    <b>Add alongside, do not replace.</b> The existing <code>runCodex</code> (<code>codex exec --json</code>,
+    <code>src/adapters/codex/</code>) stays for fast one-shot tasks. Interactive mode is a new sibling, not a rewrite.
+  </div>
+
+  <h2>Why this shape (recorded decisions)</h2>
+  <ul>
+    <li><b>Ban risk is precautionary only</b> (no observed bans). So we build <b>no anti-ban machinery</b>; the
+        human-like surface is a cheap by-product of running interactively in a real terminal, not a goal we pay
+        complexity for.</li>
+    <li><b>Control is the real win:</b> multi-turn, pause/resume, live human takeover.</li>
+    <li><b>Public VSCode API cannot read a full-screen TUI's output.</b> Shell Integration only segments normal
+        command/output pairs; a TUI is one endless execution. <code>onDidWriteTerminalData</code> is permanently
+        proposed (needs <code>--enable-proposed-api</code>, unusable on Marketplace); there is no screen-buffer API.
+        → <b>Output flows through files, never screen scraping.</b></li>
+    <li><b>No <code>node-pty</code>.</b> Native ABI must match VSCode's Electron, officially unsupported, breaks on
+        VSCode updates. → Use VSCode's own <code>createTerminal</code>.</li>
+    <li><b>Session metadata is read from the CLI's own rollout file, not the screen</b> — accurate usage/session-id
+        without trusting agent self-report.</li>
+  </ul>
+
+  <h2>Verified ground truth (real CLI)</h2>
+  <p><code>codex</code> (Rust/ratatui TUI). Sources: developers.openai.com/codex, github.com/openai/codex.</p>
+  <h3>Launch interactive</h3>
+  <pre>codex -C &lt;cwd&gt; -m &lt;model&gt; -s workspace-write -a never</pre>
+  <p>(or <code>--dangerously-bypass-approvals-and-sandbox</code> / <code>--yolo</code> to never block on approvals).
+     <code>codex exec</code> is the non-interactive path we already use. Flags are global (shared by <code>codex</code>,
+     <code>exec</code>, <code>resume</code>).</p>
+  <div class="note warn">
+    <b>NEEDS-VERIFY</b> — confirm <code>-a never</code> means <i>auto-approve within sandbox, never prompt</i> (the
+    intent) and not <i>deny everything</i>. If it blocks, fall back to <code>--yolo</code>. The slow integration gate
+    must check the agent can act without a stuck approval prompt.
+  </div>
+  <h3>Session rollout file</h3>
+  <p><code>$CODEX_HOME/sessions/YYYY/MM/DD/rollout-&lt;ts&gt;-&lt;uuid&gt;.jsonl</code> (default <code>~/.codex</code>).
+     JSONL of <code>RolloutLine</code> envelopes <code>{ "type", "payload" }</code>, <b>written incrementally</b>
+     during the session. Relevant lines:</p>
+  <ul>
+    <li><code>session_meta</code> → conversation/session <b>id</b>, cwd, cli version, git info.</li>
+    <li><code>event_msg</code> with <code>payload.type === "token_count"</code> → <b>cumulative</b> usage:
+        <code>input</code>, <code>cached_input</code> (naming per ccusage/codex-trace parsers), <code>output</code>,
+        <code>reasoning</code>, <code>total</code>. Per-turn = current − previous.</li>
+  </ul>
+  <h3>Resume &amp; isolation</h3>
+  <ul>
+    <li><b>Resume:</b> <code>codex resume &lt;id&gt;</code> / <code>codex resume --last</code> / <code>/resume</code>
+        in-TUI. The id is the rollout UUID. Native resume is our <b>crash-recovery fallback</b>.</li>
+    <li><b><code>CODEX_HOME</code></b> relocates the whole home (config + <code>sessions/</code>), so per-account
+        isolation (already wired via <code>opts.configDir</code>) moves the rollout files too.</li>
+  </ul>
+  <h3>Submit key</h3>
+  <p>Codex negotiates the <b>kitty keyboard protocol</b>, so an injected raw <code>\r</code> (0x0D) likely will
+     <b>not</b> submit — send the kitty-encoded Enter <code>\u001b[13u</code> (CSI <code>13u</code>).
+     <code>Ctrl+J</code> (<code>\n</code>) inserts a newline.</p>
+  <div class="note warn">
+    <b>BLOCKING NEEDS-VERIFY before planning</b> — the kitty negotiation is confirmed; the exact "raw
+    <code>\r</code> fails / <code>\u001b[13u</code> works in VSCode's xterm.js terminal" is inferred.
+    Verification: launch <code>codex</code> in a VSCode integrated terminal, call
+    <code>sendText("hello", false)</code> then <code>sendSequence("\u001b[13u")</code>, and confirm the prompt
+    submits. If it fails, test <code>"\r"</code>. Keep <code>submitSequence</code> a config knob either way.
+  </div>
+
+  <h2>Architecture (canonical — shared by all three CLIs)</h2>
+  <p>CLI-agnostic core in <code>src/adapters/interactive/</code>; each CLI supplies a <b>profile</b>.</p>
+  <pre>ORCHESTRATOR (extension host)              TERMINAL (codex TUI — human-visible)
+─────────────────────────────             ─────────────────────────────────────
+1. write inbox/turn-N.md  ───────┐
+2. sendText("Read inbox/turn-N.md└──────►  agent at prompt receives the ping
+   and follow it", false)              agent reads inbox file (its own tools)
+   + sendSequence(submitSequence)      agent works…  ◄── user may watch / take over
+3. FileSystemWatcher waits  ◄──────────── agent writes outbox/turn-N.json on stop
+4. read+parse outbox → TurnResult
+5. SessionHarvester reads newest    ◄──── codex appends rollout-*.jsonl itself
+   rollout-*.jsonl → sessionId+usage
+6. decide next turn:
+   · pause  = withhold next ping
+   · resume = write inbox/turn-(N+1) + ping
+──────────────────────── SAD PATH ────────────────────────
+· timeout: no outbox within T  → status 'timeout'
+· poll process group / recursive descendants: no codex → status 'crashed'
+· onDidCloseTerminal / exitStatus → terminal died</pre>
+
+  <h3>Components</h3>
+  <ol>
+    <li><b><code>TerminalSession</code></b> — wraps <code>vscode.window.createTerminal({ name, cwd, env })</code>
+        running the interactive launch argv. Captures shell PID via <code>terminal.processId</code>. Owns disposal +
+        <code>onDidCloseTerminal</code>.</li>
+    <li><b><code>Mailbox</code></b> — per-run dir <code>&lt;cwd&gt;/.skynet/&lt;workerId&gt;/{inbox,outbox}/</code>.
+        Writes <code>inbox/turn-N.md</code>; a <code>vscode.FileSystemWatcher</code> on <code>outbox/turn-N.json</code>
+        resolves the turn. (<code>workerId</code> in the path is the only multi-worker affordance in v1.) On first run,
+        ensure <code>.skynet/</code> is in the repo <code>.gitignore</code> (append if absent) so the mailbox never
+        shows in <code>git status</code>. <code>dispose()</code> removes the <code>&lt;workerId&gt;</code> dir. The
+        protocol teaches tmp+rename; the retry is the actual safety net when the agent writes directly or the watcher
+        sees a file mid-write. On a JSON parse error it <b>retries the read over a short window (~500ms)</b> until the
+        file is valid or the turn times out.
+        <span class="mut">(ponytail: retry window is a tuning knob, not load-bearing.)</span></li>
+    <li><b><code>Doorbell</code></b> — <code>terminal.show(false)</code> → <code>sendText(pingLine, false)</code> →
+        <code>commands.executeCommand("workbench.action.terminal.sendSequence", { text: profile.submitSequence })</code>.
+        The ping is tiny (<code>Read .skynet/&lt;id&gt;/inbox/turn-N.md and follow it.</code>) so it dodges large-paste
+        corruption.</li>
+    <li><b>Protocol bootstrap</b> — write the CLI's instruction file (<code>profile.instructionFile</code>,
+        Codex = <code>AGENTS.md</code>) into <code>cwd</code> teaching the contract (below) before launch.</li>
+    <li><b><code>SessionHarvester</code></b> — locates the newest <code>rollout-*.jsonl</code> under
+        <code>profile.sessionDir(configDir)</code>, parses <code>session_meta</code> + latest <code>token_count</code>
+        into <code>{ sessionId, usage }</code>. Read on each turn and at dispose.</li>
+    <li><b><code>InteractiveSession</code></b> (orchestrator) — the state machine driving turns.</li>
+  </ol>
+
+  <h3>Per-CLI profile (the seam the skeletons fill)</h3>
+  <pre>interface InteractiveCliProfile {
+  id: "codex" | "claude" | "agy";
+  launchArgv(opts: InteractiveOpts): string[];        // interactive TUI launch
+  configEnv(configDir?: string): Record&lt;string, string&gt;; // CODEX_HOME / CLAUDE_CONFIG_DIR / HOME
+  instructionFile: string;                             // "AGENTS.md" | "CLAUDE.md" | ?
+  submitSequence: string;                              // "\u001b[13u" (kitty) | "\r"
+  sessionDir(configDir?: string): string;              // absolute path; no "~" shorthand
+  harvest(sessionFileText: string): { sessionId?: string; usage?: WorkerUsage };
+}</pre>
+  <p><b>Codex profile (fully specified):</b></p>
+  <pre>const codexInteractive: InteractiveCliProfile = {
+  id: "codex",
+  launchArgv: (o) =&gt; ["-C", o.cwd, ...(o.model ? ["-m", o.model] : []),
+                      "-s", o.sandbox ?? "workspace-write", "-a", "never"],
+  configEnv: (dir) =&gt; dir ? { CODEX_HOME: dir } : {},
+  instructionFile: "AGENTS.md",
+  submitSequence: "\u001b[13u",                   // kitty Enter; knob, test vs "\r"
+  sessionDir: (dir) =&gt; dir ? path.join(dir, "sessions")
+                           : path.join(os.homedir(), ".codex", "sessions"),
+                           // recurse YYYY/MM/DD, newest rollout-*.jsonl
+  harvest: (text) =&gt; parseCodexRollout(text),          // session_meta.id + last token_count
+};</pre>
+
+  <h2>Public shape</h2>
+  <pre>// src/adapters/interactive/types.ts
+interface InteractiveOpts {
+  cwd: string;
+  workerId: string;
+  model?: string;
+  configDir?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  turnTimeoutMs?: number;   // default 300_000
+  readyTimeoutMs?: number;  // default 30_000 (turn-1 readiness probe)
+}
+
+// TurnResult is an interactive-private per-turn state. WorkerUsage/ErrorClass are shared.
+type TurnResult =
+  | { status: "paused";  summary: string }                                  // simple JSON
+  | { status: "done";    summary: string; usage?: WorkerUsage; filesTouched?: string[] } // rich
+  | { status: "error";   reason: string; errorClass?: ErrorClass }
+  | { status: "timeout" }
+  | { status: "crashed" };
+
+interface InteractiveSession extends AsyncIterable&lt;WorkerEvent&gt; {
+  send(prompt: string): Promise&lt;TurnResult&gt;;   // write inbox + doorbell; resolve on outbox / timeout / crash
+  readonly sessionId: Promise&lt;string | undefined&gt;;  // from rollout harvest
+  dispose(): void;                              // kill terminal; final harvest
+}</pre>
+  <div class="note">
+    <b>Integration seam.</b> Interactive mode is a <i>second run mode on the existing adapter</i>, not a parallel API.
+    <code>AgentAdapter</code> gains an optional method; the standalone <code>startInteractive(profile, opts)</code> is
+    the shared core the codex adapter delegates to.
+  </div>
+  <pre>interface AgentAdapter {
+  readonly id: "codex" | "claude" | "agy";
+  run(opts: RunOpts): WorkerRun;                                  // existing one-shot exec
+  runInteractive?(opts: InteractiveOpts): Promise&lt;InteractiveSession&gt;; // new; delegates to startInteractive(codexInteractive, opts)
+}</pre>
+  <p>After a turn resolves <code>done</code>, the session is complete: further <code>send()</code> calls
+     <b>reject</b> (<code>session already completed</code>) and <code>dispose()</code> is the only valid next call.
+     The terminal stays open for inspection / human takeover until <code>dispose()</code>; interactive mode does not
+     auto-kill it on <code>done</code>.</p>
+  <p><code>TurnResult</code> maps back to the existing <code>WorkerResult</code> only at the final adapter boundary:
+     <code>done</code> → <code>success</code>, <code>error</code> → <code>failed</code>,
+     <code>timeout</code> → <code>failed</code> with <code>errorClass:"transport"</code>, and
+     <code>crashed</code> → <code>failed</code> with <code>errorClass:"terminal"</code>. <code>paused</code> is not
+     a <code>WorkerResult</code>; it keeps the same <code>InteractiveSession</code> open. Mode selection is
+     orchestrator/UI policy and out of scope for this US; the adapter supports one-shot <code>run()</code> and
+     interactive <code>runInteractive()</code> concurrently.</p>
+  <p><code>pause</code>/<code>resume</code> is orchestrator-side: to pause, do not call <code>send</code> again; to
+     resume, call <code>send</code> with the next prompt. The <code>events</code> async-iterable emits a sparse stream
+     for the panel (<code>started</code>, and one <code>message</code> per turn carrying the outbox <code>summary</code>);
+     <code>usage</code> events are emitted from the harvest when present and also copied onto the resolving
+     <code>TurnResult</code>. <code>send()</code> is the active driver; the iterator is passive observation,
+     single-consumer like <code>WorkerRun</code>, and completes on <code>done</code> / <code>error</code> /
+     <code>timeout</code> / <code>crashed</code> / <code>dispose()</code>. <span class="mut">(ponytail: no custom
+     backpressure in v1; event volume is one or two events per turn.)</span></p>
+
+  <h2>Protocol contract (taught via the instruction file)</h2>
+  <div class="note">
+    For each <code>inbox/turn-N.md</code> I give you: do the work it asks, then <b>write <code>outbox/turn-N.json</code>
+    before you stop</b>, matching the same <code>N</code>:
+    <ul>
+      <li>Pausing / need the next instruction → <code>{ "status": "paused", "summary": "&lt;what you did&gt;" }</code></li>
+      <li>Whole task complete → <code>{ "status": "done", "summary": "...", "filesTouched": ["..."] }</code></li>
+      <li>Unrecoverable error → <code>{ "status": "error", "reason": "..." }</code></li>
+    </ul>
+    Never delete inbox files. Write the outbox file in a <b>single operation</b> as the <b>last action</b> of a turn
+    (write <code>turn-N.json.tmp</code>, then rename to <code>turn-N.json</code>) so the orchestrator rarely sees a
+    half-written file. The mailbox retry remains mandatory because the agent may ignore this instruction.
+  </div>
+  <p>The outbox <b>existence</b> is the turn boundary; its <code>status</code> decides the next move.
+     Usage/session-id never come from the agent — they come from the rollout harvest.</p>
+
+  <h2>Readiness handshake &amp; sad path</h2>
+  <ul>
+    <li><b>Readiness:</b> after launch we cannot read the terminal, so turn-1's ping is the readiness probe. If no
+        <code>outbox/turn-1.json</code> appears within <code>readyTimeoutMs</code> (default 30s), re-send the ping once
+        before declaring failure (mitigates the documented sendText startup race). A short fixed pre-ping delay (~1.5s)
+        reduces the race further. <span class="mut">(ponytail: delay is a tuning knob, not load-bearing.)</span></li>
+    <li><b>Turn timeout</b> (<code>turnTimeoutMs</code>, default 5 min): no outbox → <code>timeout</code>.</li>
+    <li><b>Crash:</b> poll the terminal process group (<code>pgrep -g &lt;pgid&gt;</code>) or recursively walk descendants
+        of <code>terminal.processId</code> on macOS/Linux every ~3s; no <code>codex</code> descendant while the turn
+        is open → <code>crashed</code>. This is best-effort; terminal close and turn timeout are still the hard signals.
+        <span class="mut">(ponytail: Windows child-PID polling is TBD; macOS/Linux only in v1.)</span></li>
+    <li><b>Terminal death:</b> <code>onDidCloseTerminal</code> / <code>exitStatus</code> → <code>crashed</code>.</li>
+    <li>On <code>timeout</code>/<code>crashed</code>, the orchestrator may attempt <code>codex resume &lt;sessionId&gt;</code>
+        (recovery is <b>out of scope for v1</b> — we surface the status; recovery is a later US).</li>
+  </ul>
+
+  <h2>Error classification</h2>
+  <p>Reuse the existing pure <code>classifyError(text)</code> (<code>limit</code>/<code>transport</code>/<code>terminal</code>).
+     Inputs available to it in interactive mode: the agent-written <code>error.reason</code>, plus any stderr from
+     terminal close.</p>
+  <div class="note">
+    <code>// ponytail:</code> a real 429 mid-TUI may kill the session before the agent writes <code>error.json</code>;
+    then we report <code>crashed</code>, and a later fallback US classifies from the rollout/last-known state.
+  </div>
+
+  <h2>Proof of function (acceptance gate)</h2>
+  <p>Abstract the terminal + clock behind a <code>TerminalTransport</code> interface so the core is testable without a
+     real CLI.</p>
+  <ul>
+    <li><b>turn cycle</b> <span class="mut">(fake transport, fast)</span>: <code>send()</code> → fake writes
+        <code>outbox/turn-N.json</code> → assert <code>TurnResult</code> for each of <code>paused</code> /
+        <code>done</code> (with usage from a fake rollout) / <code>error</code>.</li>
+    <li><b>timeout</b> <span class="mut">(fake, fast)</span>: fake never writes outbox → <code>status:'timeout'</code>
+        after <code>turnTimeoutMs</code>.</li>
+    <li><b>partial outbox</b> <span class="mut">(fake, fast)</span>: fake writes invalid JSON then valid → reader
+        retries and resolves on the valid content, not the half-written one.</li>
+    <li><b>crash</b> <span class="mut">(fake, fast)</span>: fake reports no child PID → <code>status:'crashed'</code>.</li>
+    <li><b>rollout parser</b> <span class="mut">(pure, fast)</span>: <code>parseCodexRollout(sample)</code> extracts
+        <code>sessionId</code> from <code>session_meta</code> and cumulative <code>usage</code> from the last
+        <code>token_count</code>, using a real sample JSONL captured from <code>codex</code>.</li>
+    <li><b>doorbell</b> <span class="mut">(pure, fast)</span>: asserts the exact <code>sendText(ping,false)</code> +
+        <code>sendSequence("\u001b[13u")</code> calls.</li>
+    <li><b>submit-key gate</b> <span class="mut">(manual, pre-plan)</span>: in a real VSCode integrated terminal,
+        prove <code>sendText("hello", false)</code> + <code>sendSequence(profile.submitSequence)</code> submits the
+        prompt. If kitty Enter fails, switch the profile knob to <code>"\r"</code>.</li>
+    <li><b>integration</b> <span class="mut">(real codex, slow, uses quota)</span>: launch interactive, <code>send</code>
+        two turns, assert outbox files + harvested usage + a live human can still type.</li>
+  </ul>
+
+  <h2>Out of scope (v1)</h2>
+  <ul>
+    <li>Multi-worker fleet / scheduler (only <code>workerId</code> path naming is reserved).</li>
+    <li>claude / agy interactive (their skeleton specs; same frame, different profile).</li>
+    <li>Automated crash/timeout <b>recovery</b> via <code>codex resume</code> (later US).</li>
+    <li>Windows child-PID polling.</li>
+    <li>Webview panel rework for the sparse interactive event stream (smoke log only).</li>
+    <li>Replacing <code>codex exec --json</code> (it stays for one-shot tasks).</li>
+  </ul>
+
+  <footer>Spec: docs/superpowers/specs/2026-06-30-interactive-codex-design.md · rendered companion for human readers.</footer>
+</div>
+</body>
+</html>

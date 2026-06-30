@@ -149,6 +149,9 @@
               <li>Antigravity adapter</li>
               <li>Normalized event stream</li>
               <li>Error classification</li>
+              <li>Interactive mode — Codex</li>
+              <li>Interactive mode — Claude</li>
+              <li>Interactive mode — Antigravity</li>
             </ul>
           </div>
           <div class="card">
@@ -293,6 +296,21 @@
           <a href="specs/2026-06-29-adapter-unification-design.md" class="t">Error classification (limit/transport vs terminal)</a>
           <div class="d">Each adapter classifies failures so the later fallback layer has a signal. No fallback logic in the adapter itself.</div>
           <span class="badge released">Released</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-30-interactive-codex-design.md" class="t">Interactive (terminal) mode — Codex</a>
+          <div class="d">Second run mode: drive codex as a live interactive TUI in a VSCode terminal. Orchestrator pastes a tiny doorbell ping (sendText + kitty-Enter) and reads results from files the agent writes (.skynet/&lt;id&gt;/inbox|outbox); turn boundary = outbox file. Usage/session-id harvested from codex's own rollout-*.jsonl, never screen-scraped. Multi-turn steering for one task + pause/resume in one session. Canonical frame for claude/agy. Adds alongside codex exec --json.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-30-interactive-claude-design.md" class="t">Interactive (terminal) mode — Claude</a>
+          <div class="d">Claude profile over the interactive-codex frame: launch claude interactive (CLAUDE.md channel, CLAUDE_CONFIG_DIR isolation), kitty-Enter submit, harvest sessionId + usage (incl. cost + cache tokens) from the ~/.claude transcript. Skeleton — transcript path/schema and the interactive auto-approve flag must be verified against the real CLI before planning.</div>
+          <span class="badge open">Open</span>
+        </div>
+        <div class="item" data-status="open">
+          <a href="specs/2026-06-30-interactive-agy-design.md" class="t">Interactive (terminal) mode — Antigravity (agy)</a>
+          <div class="d">agy profile over the frame; weakest fit. File-based turn boundary still works, but interactive-mode existence, instruction-file name, on-disk session/usage, and submit key are all NEEDS-RESEARCH (agy --print is plain-text, no usage). May degrade to no harvested metadata, or collapse to deferred if agy exposes no interactive/session surface.</div>
+          <span class="badge open">Open</span>
         </div>
       </div>
     </div>

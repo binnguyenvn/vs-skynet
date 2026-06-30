@@ -65,6 +65,45 @@
     "completed": "2026-06-29"
   },
   {
+    "slug": "adapters--interactive-codex",
+    "phase": "Phase 1 — MVP",
+    "epic": "Adapters",
+    "feature": "Interactive terminal mode — Codex",
+    "title": "Interactive (terminal) mode — Codex",
+    "description": "Second run mode: drive codex as a live interactive TUI inside a VSCode terminal. Orchestrator pastes a tiny doorbell ping in (sendText + kitty-Enter sendSequence) and reads results out of files the agent writes (.skynet/<id>/inbox|outbox); turn boundary = outbox file. Usage/session-id harvested from codex's own rollout-*.jsonl, never screen-scraped. Multi-turn steering for one task + pause/resume in one session. Canonical frame for the claude/agy interactive specs. Adds alongside codex exec --json.",
+    "status": "open",
+    "spec": "specs/2026-06-30-interactive-codex-design.md",
+    "plan": null,
+    "created": "2026-06-30",
+    "completed": null
+  },
+  {
+    "slug": "adapters--interactive-claude",
+    "phase": "Phase 1 — MVP",
+    "epic": "Adapters",
+    "feature": "Interactive terminal mode — Claude",
+    "title": "Interactive (terminal) mode — Claude",
+    "description": "Claude profile over the interactive-codex frame: launch claude interactive (CLAUDE.md instruction channel, CLAUDE_CONFIG_DIR isolation), kitty-Enter submit, harvest sessionId + usage (incl. cost + cache tokens) from the ~/.claude transcript. Skeleton — transcript path/schema and the interactive auto-approve flag must be verified against the real CLI before planning.",
+    "status": "open",
+    "spec": "specs/2026-06-30-interactive-claude-design.md",
+    "plan": null,
+    "created": "2026-06-30",
+    "completed": null
+  },
+  {
+    "slug": "adapters--interactive-agy",
+    "phase": "Phase 1 — MVP",
+    "epic": "Adapters",
+    "feature": "Interactive terminal mode — Antigravity",
+    "title": "Interactive (terminal) mode — Antigravity (agy)",
+    "description": "agy profile over the interactive-codex frame; weakest fit. File-based turn boundary still works, but interactive-mode existence, instruction-file name, on-disk session/usage, and submit key are all NEEDS-RESEARCH (agy --print is plain-text, no usage). May degrade to no harvested metadata, or collapse to deferred if agy exposes no interactive/session surface.",
+    "status": "open",
+    "spec": "specs/2026-06-30-interactive-agy-design.md",
+    "plan": null,
+    "created": "2026-06-30",
+    "completed": null
+  },
+  {
     "slug": "harness--stepfn-panel",
     "phase": "Phase 1 — MVP",
     "epic": "Harness",
