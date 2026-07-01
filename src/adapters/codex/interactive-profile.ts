@@ -1,4 +1,7 @@
+import * as os from "node:os";
+import * as path from "node:path";
 import type { HarvestResult } from "../interactive/types";
+import type { InteractiveCliProfile } from "../interactive/types";
 import type { WorkerUsage } from "../types";
 
 interface RolloutLine {
@@ -50,3 +53,32 @@ export function parseCodexRollout(text: string): HarvestResult {
 
   return { sessionId, usage, rateLimits };
 }
+
+export const codexInteractive: InteractiveCliProfile = {
+  id: "codex",
+  launchArgv: (o) => [
+    "-C",
+    o.cwd,
+    ...(o.model ? ["-m", o.model] : []),
+    "-s",
+    o.sandbox ?? "workspace-write",
+    "-a",
+    "never",
+    "-c",
+    "disable_paste_burst=true",
+    "-c",
+    'tui.keymap.composer.submit="tab"',
+    "-c",
+    'tui.keymap.composer.queue="ctrl-q"',
+  ],
+  configEnv: (dir): Record<string, string> => {
+    if (!dir) {
+      return {};
+    }
+    return { CODEX_HOME: dir };
+  },
+  instructionFile: "AGENTS.md",
+  submitSequence: "\t",
+  sessionDir: (dir) => (dir ? path.join(dir, "sessions") : path.join(os.homedir(), ".codex", "sessions")),
+  harvest: (text) => parseCodexRollout(text),
+};
