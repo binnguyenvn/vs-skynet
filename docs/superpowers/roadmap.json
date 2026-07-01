@@ -73,7 +73,7 @@
     "description": "Second run mode: drive codex as a live interactive TUI inside a VSCode terminal. Orchestrator pastes a tiny doorbell ping in (sendText + kitty-Enter sendSequence) and reads results out of files the agent writes (.skynet/<id>/inbox|outbox); turn boundary = outbox file. Usage/session-id harvested from codex's own rollout-*.jsonl, never screen-scraped. Multi-turn steering for one task + pause/resume in one session. Canonical frame for the claude/agy interactive specs. Adds alongside codex exec --json.",
     "status": "open",
     "spec": "specs/2026-06-30-interactive-codex-design.md",
-    "plan": null,
+    "plan": "plans/2026-07-01-interactive-codex.md",
     "created": "2026-06-30",
     "completed": null
   },
