@@ -19,11 +19,15 @@ export type WebviewToExtension =
   | { type: "testClaude"; fields?: TestFields }
   | { type: "testCodexInteractiveStart"; fields?: TestFields }
   | { type: "testCodexInteractiveSend"; prompt: string }
-  | { type: "testCodexInteractiveDispose" };
+  | { type: "testCodexInteractiveDispose" }
+  | { type: "testAgyInteractiveStart"; fields?: TestFields }
+  | { type: "testAgyInteractiveSend"; prompt: string }
+  | { type: "testAgyInteractiveDispose" };
 
 export type ExtensionToWebview =
   | { type: "greeting"; text: string }
   | { type: "codexLog"; level: "info" | "error"; text: string }
   | { type: "agyLog"; level: "info" | "error"; text: string }
   | { type: "claudeLog"; level: "info" | "error"; text: string }
-  | { type: "codexInteractiveLog"; level: "info" | "error"; text: string };
+  | { type: "codexInteractiveLog"; level: "info" | "error"; text: string }
+  | { type: "agyInteractiveLog"; level: "info" | "error"; text: string };

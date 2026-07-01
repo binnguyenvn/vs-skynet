@@ -6,6 +6,8 @@ interface LogWebview {
   postMessage(msg: ExtensionToWebview): boolean | PromiseLike<boolean>;
 }
 
+type InteractiveLogType = "codexInteractiveLog" | "agyInteractiveLog";
+
 const LABELS: Record<AgentAdapter["id"], string> = { codex: "Codex", claude: "Claude", agy: "Agy" };
 
 export function formatEvent(ev: WorkerEvent): string | null {
@@ -44,8 +46,8 @@ export async function startInteractiveTestToWebview(
   webview: LogWebview,
   opts: InteractiveOpts
 ): Promise<InteractiveSession | undefined> {
-  const post = (level: "info" | "error", text: string) =>
-    webview.postMessage({ type: "codexInteractiveLog", level, text });
+  const logType: InteractiveLogType = adapter.id === "agy" ? "agyInteractiveLog" : "codexInteractiveLog";
+  const post = (level: "info" | "error", text: string) => webview.postMessage({ type: logType, level, text });
 
   if (!adapter.runInteractive) {
     await post("error", `${adapter.id} does not support interactive mode`);
@@ -77,10 +79,10 @@ export async function startInteractiveTestToWebview(
 export async function sendInteractiveTurn(
   session: InteractiveSession | undefined,
   webview: LogWebview,
-  prompt: string
+  prompt: string,
+  logType: InteractiveLogType
 ): Promise<void> {
-  const post = (level: "info" | "error", text: string) =>
-    webview.postMessage({ type: "codexInteractiveLog", level, text });
+  const post = (level: "info" | "error", text: string) => webview.postMessage({ type: logType, level, text });
 
   if (!session) {
     await post("error", "no interactive session running - click Start Interactive first");

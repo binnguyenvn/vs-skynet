@@ -120,7 +120,32 @@ function CliForm({ config }: { config: CliConfig }) {
   );
 }
 
-function CodexInteractiveForm() {
+interface InteractiveCliConfig {
+  start: (fields: TestFields) => WebviewToExtension;
+  send: (prompt: string) => WebviewToExtension;
+  dispose: () => WebviewToExtension;
+  log: "codexInteractiveLog" | "agyInteractiveLog";
+  title: string;
+}
+
+const INTERACTIVE_CLIS: InteractiveCliConfig[] = [
+  {
+    start: (fields) => ({ type: "testCodexInteractiveStart", fields }),
+    send: (prompt) => ({ type: "testCodexInteractiveSend", prompt }),
+    dispose: () => ({ type: "testCodexInteractiveDispose" }),
+    log: "codexInteractiveLog",
+    title: "Codex",
+  },
+  {
+    start: (fields) => ({ type: "testAgyInteractiveStart", fields }),
+    send: (prompt) => ({ type: "testAgyInteractiveSend", prompt }),
+    dispose: () => ({ type: "testAgyInteractiveDispose" }),
+    log: "agyInteractiveLog",
+    title: "Agy",
+  },
+];
+
+function InteractiveForm({ config }: { config: InteractiveCliConfig }) {
   const [values, setValues] = useState<TestFields>({ workerId: "webview" });
   const [prompt, setPrompt] = useState("Reply by writing the outbox JSON with status paused and summary ok.");
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -129,40 +154,40 @@ function CodexInteractiveForm() {
   useEffect(
     () =>
       onMessage((msg) => {
-        if (isLog(msg) && msg.type === "codexInteractiveLog") {
+        if (isLog(msg) && msg.type === config.log) {
           setLogs((current) => [...current, { level: msg.level, text: msg.text }]);
           if (msg.text === "disposed" || msg.level === "error") {
             setRunning(false);
           }
         }
       }),
-    []
+    [config.log]
   );
 
   const start = () => {
     setLogs([]);
     setRunning(true);
-    postMessage({ type: "testCodexInteractiveStart", fields: values });
+    postMessage(config.start(values));
   };
 
-  const send = () => postMessage({ type: "testCodexInteractiveSend", prompt });
+  const send = () => postMessage(config.send(prompt));
 
   const dispose = () => {
     setRunning(false);
-    postMessage({ type: "testCodexInteractiveDispose" });
+    postMessage(config.dispose());
   };
 
   return (
     <div className="w-full rounded-md border bg-muted/30 p-3">
-      <div className="mb-2 text-sm font-medium">Codex Interactive</div>
+      <div className="mb-2 text-sm font-medium">{config.title} Interactive</div>
       <div className="flex flex-col gap-2">
         {INTERACTIVE_FIELDS.map((f) => (
           <div key={f.key} className="flex flex-col gap-1">
-            <Label htmlFor={`codex-interactive-${f.key}`} className="text-xs">
+            <Label htmlFor={`${config.log}-${f.key}`} className="text-xs">
               {f.label}
             </Label>
             <Input
-              id={`codex-interactive-${f.key}`}
+              id={`${config.log}-${f.key}`}
               value={values[f.key] ?? ""}
               placeholder={f.placeholder}
               onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
@@ -170,11 +195,11 @@ function CodexInteractiveForm() {
           </div>
         ))}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="codex-interactive-prompt" className="text-xs">
+          <Label htmlFor={`${config.log}-prompt`} className="text-xs">
             Turn prompt
           </Label>
           <Input
-            id="codex-interactive-prompt"
+            id={`${config.log}-prompt`}
             value={prompt}
             placeholder="Turn prompt"
             onChange={(e) => setPrompt(e.target.value)}
@@ -234,7 +259,9 @@ export function HelloView() {
       {CLIS.map((config) => (
         <CliForm key={config.type} config={config} />
       ))}
-      <CodexInteractiveForm />
+      {INTERACTIVE_CLIS.map((config) => (
+        <InteractiveForm key={config.log} config={config} />
+      ))}
     </div>
   );
 }
