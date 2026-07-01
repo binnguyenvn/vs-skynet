@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { classifyError } from "../classify";
+import { startInteractive } from "../interactive/interactive-session";
 import { mapCodexLine } from "./events";
+import { codexInteractive } from "./interactive-profile";
 import type { AgentAdapter, RunOpts, WorkerEvent, WorkerResult, WorkerRun, WorkerUsage } from "../types";
 
 export interface CodexRunOpts extends RunOpts {
@@ -136,4 +138,5 @@ export function runCodex(opts: CodexRunOpts): WorkerRun {
 export const codexAdapter: AgentAdapter = {
   id: "codex",
   run: (opts) => runCodex(opts),
+  runInteractive: (opts) => startInteractive(codexInteractive, opts),
 };
