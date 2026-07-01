@@ -99,7 +99,7 @@
     "description": "agy profile over the interactive-codex frame; weakest fit. File-based turn boundary still works, but interactive-mode existence, instruction-file name, on-disk session/usage, and submit key are all NEEDS-RESEARCH (agy --print is plain-text, no usage). May degrade to no harvested metadata, or collapse to deferred if agy exposes no interactive/session surface.",
     "status": "open",
     "spec": "specs/2026-06-30-interactive-agy-design.md",
-    "plan": null,
+    "plan": "plans/2026-07-01-interactive-agy.md",
     "created": "2026-06-30",
     "completed": null
   },
