@@ -43,7 +43,7 @@
     <span class="tag">2026-07-01</span>
     <span class="tag">TDD · frequent commits</span>
     <span class="tag">spec: interactive-codex-design (groomed 2026-07-01)</span>
-    <span class="tag">12 tasks · 1 User Story</span>
+    <span class="tag">13 tasks · 1 User Story</span>
   </div>
 
   <div class="note good"><b>Grooming context:</b> <code>src/test/terminal-probe.test.ts</code> already proved the mechanism (launch argv, submit key, mailbox pause/resume/done, <code>/status</code>) against a real <code>codex-cli 0.142.4</code> install on 2026-07-01. This plan builds the production code path (<code>InteractiveSession</code>, <code>Mailbox</code>, etc.) that the probe's ad hoc helpers stand in for, and closes a grooming-time safety gap: instruction-file bootstrap now appends/strips a marker block instead of overwriting a real <code>AGENTS.md</code>.</div>
@@ -199,6 +199,20 @@
       <li><code>CODEX_INTERACTIVE_E2E=1 npm test</code> → real-CLI proof green</li>
       <li><code>npm test</code> → full fast suite still green, integration suite skipped</li>
       <li>Commit · update roadmap <code>plan</code> field</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 13 — Webview smoke-test button for interactive codex mode</h3>
+    <div class="files">Modify <code>src/webview/protocol.ts</code>, <code>src/adapters/webview-bridge.ts</code>, <code>src/webview/panel.ts</code>, <code>src/integration/hello.tsx</code> · Test <code>webview-bridge-interactive.test.ts</code></div>
+    <div class="mut">Mirrors the existing "Test Codex" button (<code>streamAdapterTestToWebview</code> / <code>CliForm</code>) for the turn-based flow: Start opens an <code>InteractiveSession</code> and streams its events; Send Turn posts one prompt and logs the <code>TurnResult</code>; Dispose ends it. Stays inside the spec's "smoke log only" boundary — no panel rework.</div>
+    <ul class="steps">
+      <li>Write failing bridge tests (start streams events; no-runInteractive → error; send posts paused/done/error/timeout/crashed; send with no session → error)</li>
+      <li>Compile → fails (new exports/message types missing)</li>
+      <li>Add protocol message types, export <code>formatEvent</code>, implement <code>startInteractiveTestToWebview</code>/<code>sendInteractiveTurn</code>, wire panel.ts, add <code>CodexInteractiveForm</code> to hello.tsx</li>
+      <li><code>npm test</code> → green (bridge tests only — hello.tsx has no existing test coverage either)</li>
+      <li>Manual smoke check in the Extension Development Host</li>
+      <li>Commit</li>
     </ul>
   </div>
 

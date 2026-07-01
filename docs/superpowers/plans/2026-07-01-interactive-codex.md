@@ -2022,11 +2022,561 @@ git commit -m "docs: link interactive-codex roadmap entry to its plan"
 
 ---
 
+### Task 13: Webview smoke-test button for interactive codex mode
+
+**Files:**
+- Modify: `src/webview/protocol.ts` (add message types + `TestFields.workerId`)
+- Modify: `src/adapters/webview-bridge.ts` (export `formatEvent`; add `startInteractiveTestToWebview`, `sendInteractiveTurn`)
+- Modify: `src/webview/panel.ts` (wire the three new message types, hold one `InteractiveSession` per panel)
+- Modify: `src/integration/hello.tsx` (add a `CodexInteractiveForm`, rendered alongside the existing `CliForm`s)
+- Test: `src/test/webview-bridge-interactive.test.ts`
+
+**Interfaces:**
+- Consumes: `AgentAdapter`, `WorkerEvent` from `../types`; `InteractiveOpts`, `InteractiveSession`, `TurnResult` from `./interactive/types` (Task 1); `codexAdapter.runInteractive` (Task 11).
+- Produces: `startInteractiveTestToWebview(adapter, webview, opts): Promise<InteractiveSession | undefined>`, `sendInteractiveTurn(session, webview, prompt): Promise<void>`.
+
+This mirrors the existing "Test Codex" smoke button (`streamAdapterTestToWebview`, wired in `panel.ts`, rendered by `CliForm` in `hello.tsx`) but for the turn-based flow: **start** opens an `InteractiveSession` and streams its `WorkerEvent`s as log lines in the background; **send turn** posts one prompt and logs the resulting `TurnResult`; **dispose** ends it. Per the spec's own Out-of-scope line ("webview panel rework... smoke log only"), this stays a manual smoke button — no new panel, no turn history UI beyond the existing log list.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `src/test/webview-bridge-interactive.test.ts`:
+
+```ts
+import * as assert from "assert";
+import { sendInteractiveTurn, startInteractiveTestToWebview } from "../adapters/webview-bridge";
+import type { AgentAdapter, WorkerEvent } from "../adapters/types";
+import type { InteractiveSession, TurnResult } from "../adapters/interactive/types";
+import type { ExtensionToWebview } from "../webview/protocol";
+
+function fakeInteractiveSession(events: WorkerEvent[], turnResults: TurnResult[]): InteractiveSession {
+  let turnIndex = 0;
+  return {
+    async send(): Promise<TurnResult> {
+      const result = turnResults[turnIndex] ?? { status: "error", reason: "no more turns configured" };
+      turnIndex += 1;
+      return result;
+    },
+    sessionId: Promise.resolve("sess-1"),
+    async dispose(): Promise<void> {},
+    async *[Symbol.asyncIterator]() {
+      yield* events;
+    },
+  };
+}
+
+function fakeAdapter(runInteractive?: AgentAdapter["runInteractive"]): AgentAdapter {
+  return { id: "codex", run: () => { throw new Error("run() not used by this test"); }, runInteractive };
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+suite("startInteractiveTestToWebview", () => {
+  test("starts a session and streams its events as codexInteractiveLog lines", async () => {
+    const posted: ExtensionToWebview[] = [];
+    const session = fakeInteractiveSession(
+      [
+        { kind: "started", sessionId: "sess-1" },
+        { kind: "message", text: "hello from turn 1" },
+      ],
+      []
+    );
+    const adapter = fakeAdapter(async () => session);
+
+    const returned = await startInteractiveTestToWebview(adapter, { postMessage: (m) => (posted.push(m), true) }, {
+      cwd: "/tmp",
+      workerId: "w1",
+    });
+    await flushMicrotasks();
+
+    assert.strictEqual(returned, session);
+    assert.deepStrictEqual(posted, [
+      { type: "codexInteractiveLog", level: "info", text: "Starting Codex interactive session..." },
+      { type: "codexInteractiveLog", level: "info", text: "started session sess-1" },
+      { type: "codexInteractiveLog", level: "info", text: "hello from turn 1" },
+    ]);
+  });
+
+  test("posts an error and returns undefined when the adapter has no runInteractive", async () => {
+    const posted: ExtensionToWebview[] = [];
+    const adapter = fakeAdapter(undefined);
+
+    const returned = await startInteractiveTestToWebview(adapter, { postMessage: (m) => (posted.push(m), true) }, {
+      cwd: "/tmp",
+      workerId: "w1",
+    });
+
+    assert.strictEqual(returned, undefined);
+    assert.deepStrictEqual(posted, [
+      { type: "codexInteractiveLog", level: "error", text: "codex does not support interactive mode" },
+    ]);
+  });
+});
+
+suite("sendInteractiveTurn", () => {
+  test("posts a formatted line for paused, done, error, timeout, and crashed results", async () => {
+    const posted: ExtensionToWebview[] = [];
+    const session = fakeInteractiveSession([], [
+      { status: "paused", summary: "step 1 complete" },
+      { status: "done", summary: "all done", filesTouched: ["a.txt"] },
+      { status: "error", reason: "hit a 429 rate limit" },
+      { status: "timeout" },
+      { status: "crashed" },
+    ]);
+    const webview = { postMessage: (m: ExtensionToWebview) => (posted.push(m), true) };
+
+    await sendInteractiveTurn(session, webview, "turn 1");
+    await sendInteractiveTurn(session, webview, "turn 2");
+    await sendInteractiveTurn(session, webview, "turn 3");
+    await sendInteractiveTurn(session, webview, "turn 4");
+    await sendInteractiveTurn(session, webview, "turn 5");
+
+    assert.deepStrictEqual(posted, [
+      { type: "codexInteractiveLog", level: "info", text: "paused: step 1 complete" },
+      { type: "codexInteractiveLog", level: "info", text: "done: all done" },
+      { type: "codexInteractiveLog", level: "error", text: "error: hit a 429 rate limit" },
+      { type: "codexInteractiveLog", level: "error", text: "timeout" },
+      { type: "codexInteractiveLog", level: "error", text: "crashed" },
+    ]);
+  });
+
+  test("posts an error when no session is running yet", async () => {
+    const posted: ExtensionToWebview[] = [];
+    await sendInteractiveTurn(undefined, { postMessage: (m) => (posted.push(m), true) }, "turn 1");
+    assert.deepStrictEqual(posted, [
+      { type: "codexInteractiveLog", level: "error", text: "no interactive session running — click Start Interactive first" },
+    ]);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npm run compile-tests`
+Expected: FAIL — `startInteractiveTestToWebview`/`sendInteractiveTurn` are not exported from `../adapters/webview-bridge`, and `codexInteractiveLog` is not a valid `ExtensionToWebview` member yet.
+
+- [ ] **Step 3: Write minimal implementation**
+
+Modify `src/webview/protocol.ts` so the complete file reads:
+
+```ts
+// Messages shared by the extension host and the webview. Imported by both
+// sides so the postMessage contract is checked at compile time.
+
+// Per-CLI test knobs from the webview forms. All optional; bridges fall back to
+// defaults. oauthToken is claude-only; workerId is interactive-only.
+export interface TestFields {
+  prompt?: string;
+  model?: string;
+  configDir?: string;
+  oauthToken?: string;
+  workerId?: string;
+}
+
+export type WebviewToExtension =
+  | { type: "ready" }
+  | { type: "hello"; name: string }
+  | { type: "testCodex"; fields?: TestFields }
+  | { type: "testAgy"; fields?: TestFields }
+  | { type: "testClaude"; fields?: TestFields }
+  | { type: "testCodexInteractiveStart"; fields?: TestFields }
+  | { type: "testCodexInteractiveSend"; prompt: string }
+  | { type: "testCodexInteractiveDispose" };
+
+export type ExtensionToWebview =
+  | { type: "greeting"; text: string }
+  | { type: "codexLog"; level: "info" | "error"; text: string }
+  | { type: "agyLog"; level: "info" | "error"; text: string }
+  | { type: "claudeLog"; level: "info" | "error"; text: string }
+  | { type: "codexInteractiveLog"; level: "info" | "error"; text: string };
+```
+
+Modify `src/adapters/webview-bridge.ts` so the complete file reads:
+
+```ts
+import type { AgentAdapter, RunOpts, WorkerEvent } from "./types";
+import type { InteractiveOpts, InteractiveSession, TurnResult } from "./interactive/types";
+import type { ExtensionToWebview } from "../webview/protocol";
+
+interface LogWebview {
+  postMessage(msg: ExtensionToWebview): boolean | PromiseLike<boolean>;
+}
+
+const LABELS: Record<AgentAdapter["id"], string> = { codex: "Codex", claude: "Claude", agy: "Agy" };
+
+export function formatEvent(ev: WorkerEvent): string | null {
+  switch (ev.kind) {
+    case "started":
+      return `started session ${ev.sessionId}${ev.model ? ` (${ev.model})` : ""}`;
+    case "message":
+      return ev.text;
+    case "thinking":
+      return `thinking: ${ev.text}`;
+    case "tool_call":
+      return `tool ${ev.name}`;
+    case "usage": {
+      let s = `usage in=${ev.inputTokens} out=${ev.outputTokens}`;
+      if (ev.cachedInputTokens !== undefined) {
+        s += ` cached=${ev.cachedInputTokens}`;
+      }
+      if (ev.cacheWriteTokens !== undefined) {
+        s += ` cacheW=${ev.cacheWriteTokens}`;
+      }
+      if (ev.reasoningTokens !== undefined) {
+        s += ` reasoning=${ev.reasoningTokens}`;
+      }
+      if (ev.costUsd !== undefined) {
+        s += ` cost=$${ev.costUsd}`;
+      }
+      return s;
+    }
+    case "unknown":
+      return null;
+  }
+}
+
+export async function streamAdapterTestToWebview(
+  adapter: AgentAdapter,
+  webview: LogWebview,
+  cwd: string,
+  overrides: Partial<RunOpts> = {}
+): Promise<void> {
+  const logType = `${adapter.id}Log` as "codexLog" | "claudeLog" | "agyLog";
+  const post = (level: "info" | "error", text: string) =>
+    webview.postMessage({ type: logType, level, text });
+
+  await post("info", `Starting ${LABELS[adapter.id]} test...`);
+
+  const run = adapter.run({ prompt: "Reply with exactly the word: pong", cwd, ...overrides });
+
+  try {
+    for await (const ev of run) {
+      const text = formatEvent(ev);
+      if (text) {
+        await post("info", text);
+      }
+    }
+
+    const result = await run.result;
+    if (result.status === "success") {
+      await post("info", "done success");
+    } else {
+      await post("error", `done ${result.status}: ${result.reason ?? "unknown error"}`);
+    }
+  } catch (err) {
+    await post("error", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function postInteractiveLog(webview: LogWebview, level: "info" | "error", text: string) {
+  return webview.postMessage({ type: "codexInteractiveLog", level, text });
+}
+
+export async function startInteractiveTestToWebview(
+  adapter: AgentAdapter,
+  webview: LogWebview,
+  opts: InteractiveOpts
+): Promise<InteractiveSession | undefined> {
+  if (!adapter.runInteractive) {
+    await postInteractiveLog(webview, "error", `${adapter.id} does not support interactive mode`);
+    return undefined;
+  }
+
+  await postInteractiveLog(webview, "info", `Starting ${LABELS[adapter.id]} interactive session...`);
+  try {
+    const session = await adapter.runInteractive(opts);
+    void drainInteractiveEvents(session, webview);
+    return session;
+  } catch (err) {
+    await postInteractiveLog(webview, "error", err instanceof Error ? err.message : String(err));
+    return undefined;
+  }
+}
+
+async function drainInteractiveEvents(session: InteractiveSession, webview: LogWebview): Promise<void> {
+  for await (const ev of session) {
+    const text = formatEvent(ev);
+    if (text) {
+      await postInteractiveLog(webview, "info", text);
+    }
+  }
+}
+
+export async function sendInteractiveTurn(
+  session: InteractiveSession | undefined,
+  webview: LogWebview,
+  prompt: string
+): Promise<void> {
+  if (!session) {
+    await postInteractiveLog(webview, "error", "no interactive session running — click Start Interactive first");
+    return;
+  }
+  try {
+    const result = await session.send(prompt);
+    const level = result.status === "paused" || result.status === "done" ? "info" : "error";
+    await postInteractiveLog(webview, level, formatTurnResult(result));
+  } catch (err) {
+    await postInteractiveLog(webview, "error", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function formatTurnResult(result: TurnResult): string {
+  switch (result.status) {
+    case "paused":
+      return `paused: ${result.summary}`;
+    case "done":
+      return `done: ${result.summary}`;
+    case "error":
+      return `error: ${result.reason}`;
+    case "timeout":
+      return "timeout";
+    case "crashed":
+      return "crashed";
+  }
+}
+```
+
+Modify `src/webview/panel.ts` so the complete file reads:
+
+```ts
+import * as vscode from "vscode";
+import { agyAdapter } from "../adapters/agy/agy-adapter";
+import { claudeAdapter } from "../adapters/claude/claude-adapter";
+import { codexAdapter } from "../adapters/codex/codex-adapter";
+import type { InteractiveSession } from "../adapters/interactive/types";
+import {
+  sendInteractiveTurn,
+  startInteractiveTestToWebview,
+  streamAdapterTestToWebview,
+} from "../adapters/webview-bridge";
+import { buildWebviewHtml, nonce } from "./html";
+import type { TestFields, WebviewToExtension } from "./protocol";
+
+export function openWebview(
+  context: vscode.ExtensionContext,
+  viewId: string
+): vscode.WebviewPanel {
+  const distWebview = vscode.Uri.joinPath(context.extensionUri, "dist", "webview");
+  const panel = vscode.window.createWebviewPanel(
+    "skynet." + viewId,
+    "Skynet",
+    vscode.ViewColumn.One,
+    { enableScripts: true, localResourceRoots: [distWebview] }
+  );
+
+  const webview = panel.webview;
+  const scriptUri = webview
+    .asWebviewUri(vscode.Uri.joinPath(distWebview, "main.js"))
+    .toString();
+  const styleUri = webview
+    .asWebviewUri(vscode.Uri.joinPath(distWebview, "main.css"))
+    .toString();
+
+  webview.html = buildWebviewHtml({
+    scriptUri,
+    styleUri,
+    cspSource: webview.cspSource,
+    nonce: nonce(),
+    viewId,
+  });
+
+  // One smoke-test interactive session per panel — a manual test surface, not
+  // the multi-worker fleet (out of scope per the spec).
+  let interactiveSession: InteractiveSession | undefined;
+
+  webview.onDidReceiveMessage(
+    (msg: WebviewToExtension) => {
+      if (msg.type === "hello") {
+        vscode.window.showInformationMessage(`Webview says hello: ${msg.name}`);
+        webview.postMessage({ type: "greeting", text: `Hello back, ${msg.name}!` });
+      }
+      const cwd = () =>
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionUri.fsPath;
+      // configDir/model/oauthToken map straight onto RunOpts; prune empty strings
+      // so the bridge defaults stay in effect.
+      const clean = (f?: TestFields): Partial<TestFields> =>
+        Object.fromEntries(Object.entries(f ?? {}).filter(([, v]) => v !== ""));
+      if (msg.type === "testCodex") {
+        void streamAdapterTestToWebview(codexAdapter, webview, cwd(), clean(msg.fields));
+      }
+      if (msg.type === "testAgy") {
+        void streamAdapterTestToWebview(agyAdapter, webview, cwd(), clean(msg.fields));
+      }
+      if (msg.type === "testClaude") {
+        void streamAdapterTestToWebview(claudeAdapter, webview, cwd(), clean(msg.fields));
+      }
+      if (msg.type === "testCodexInteractiveStart") {
+        const fields = clean(msg.fields);
+        void startInteractiveTestToWebview(codexAdapter, webview, {
+          cwd: cwd(),
+          workerId: fields.workerId || "webview-smoke",
+          model: fields.model,
+          configDir: fields.configDir,
+        }).then((session) => {
+          interactiveSession = session;
+        });
+      }
+      if (msg.type === "testCodexInteractiveSend") {
+        void sendInteractiveTurn(interactiveSession, webview, msg.prompt);
+      }
+      if (msg.type === "testCodexInteractiveDispose") {
+        void interactiveSession?.dispose();
+        interactiveSession = undefined;
+      }
+    },
+    undefined,
+    context.subscriptions
+  );
+
+  return panel;
+}
+```
+
+Add `CodexInteractiveForm` to `src/integration/hello.tsx` — insert this component above `export function HelloView()`:
+
+```tsx
+const INTERACTIVE_FIELDS: FieldDef[] = [
+  { key: "model", label: "Model", placeholder: "(adapter default)" },
+  { key: "configDir", label: "configDir", placeholder: "isolate account, e.g. ~/.agents/cc-thai" },
+  { key: "workerId", label: "workerId", placeholder: "webview-smoke" },
+];
+
+function CodexInteractiveForm() {
+  const [values, setValues] = useState<TestFields>({});
+  const [turnPrompt, setTurnPrompt] = useState("");
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [started, setStarted] = useState(false);
+
+  useEffect(
+    () =>
+      onMessage((msg) => {
+        if (isLog(msg) && msg.type === "codexInteractiveLog") {
+          setLogs((current) => [...current, { level: msg.level, text: msg.text }]);
+        }
+      }),
+    []
+  );
+
+  const start = () => {
+    setLogs([]);
+    setStarted(true);
+    postMessage({ type: "testCodexInteractiveStart", fields: values });
+  };
+
+  const sendTurn = () => {
+    if (!turnPrompt) {
+      return;
+    }
+    postMessage({ type: "testCodexInteractiveSend", prompt: turnPrompt });
+    setTurnPrompt("");
+  };
+
+  const dispose = () => {
+    postMessage({ type: "testCodexInteractiveDispose" });
+    setStarted(false);
+  };
+
+  return (
+    <div className="w-full rounded-md border bg-muted/30 p-3">
+      <div className="mb-2 text-sm font-medium">Codex Interactive</div>
+      <div className="flex flex-col gap-2">
+        {INTERACTIVE_FIELDS.map((f) => (
+          <div key={f.key} className="flex flex-col gap-1">
+            <Label htmlFor={`codexInteractive-${f.key}`} className="text-xs">
+              {f.label}
+            </Label>
+            <Input
+              id={`codexInteractive-${f.key}`}
+              value={values[f.key] ?? ""}
+              placeholder={f.placeholder}
+              disabled={started}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+            />
+          </div>
+        ))}
+      </div>
+      <Button onClick={start} disabled={started} variant="secondary" className="mt-3">
+        <TerminalIcon />
+        {started ? "Interactive session running..." : "Start Codex Interactive"}
+      </Button>
+      {started && (
+        <div className="mt-3 flex flex-col gap-2">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="codexInteractive-turnPrompt" className="text-xs">
+              Turn prompt
+            </Label>
+            <Input
+              id="codexInteractive-turnPrompt"
+              value={turnPrompt}
+              placeholder="Write flow-state.txt containing exactly `step-1`"
+              onChange={(e) => setTurnPrompt(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={sendTurn} variant="secondary">
+              Send Turn
+            </Button>
+            <Button onClick={dispose} variant="outline">
+              Dispose
+            </Button>
+          </div>
+        </div>
+      )}
+      <div className="mt-3 font-mono text-xs whitespace-pre-wrap break-words flex flex-col gap-1">
+        {logs.length === 0 ? (
+          <span className="text-muted-foreground">Click Start Codex Interactive to begin.</span>
+        ) : (
+          logs.map((line, index) => (
+            <div
+              key={`${line.text}-${index}`}
+              className={line.level === "error" ? "text-destructive" : "text-foreground"}
+            >
+              {line.text}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+```
+
+Then render it in `HelloView`, right after the `CLIS.map(...)` block:
+
+```tsx
+      {CLIS.map((config) => (
+        <CliForm key={config.type} config={config} />
+      ))}
+      <CodexInteractiveForm />
+    </div>
+  );
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npm test`
+Expected: PASS — both `webview-bridge-interactive.test.ts` suites green, plus the existing `webview-bridge.test.ts` suite still green (untouched behavior, `formatEvent` only gained an export keyword).
+
+- [ ] **Step 5: Manual smoke check**
+
+This task's automated test covers the bridge only — `hello.tsx` has no existing test coverage for `CliForm` either, so this matches convention. Manually verify the UI: run the extension (`F5` / Extension Development Host), open the Skynet webview, fill in `workerId`, click **Start Codex Interactive**, confirm a log line appears, type a turn prompt, click **Send Turn**, confirm a `paused:`/`done:` line appears, click **Dispose**, confirm the button resets.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/webview/protocol.ts src/adapters/webview-bridge.ts src/webview/panel.ts src/integration/hello.tsx src/test/webview-bridge-interactive.test.ts
+git commit -m "feat: webview smoke-test button for interactive codex mode"
+```
+
+---
+
 ## Self-review
 
-**Spec coverage:** every numbered component in the groomed spec's Architecture section maps to a task — `TerminalSession`/`TerminalTransport` → Task 8, `Mailbox` → Task 2, `Doorbell` → Task 3, protocol bootstrap → Task 4, `SessionHarvester` → Task 7 (+ Task 6 for the codex-specific parse), `InteractiveSession` → Task 9, per-CLI profile → Task 10, integration seam → Task 11. Readiness handshake and crash sad-path → Task 9 (`waitForOutbox`) + Task 5 (`hasLiveDescendant`). Proof-of-function bullets (turn cycle, timeout, partial outbox, crash, rollout parser, doorbell) → Tasks 2, 3, 5, 6, 9. Submit-key gate and slash-status diagnostic are already DONE per the groomed spec (cited, not re-planned). Real-CLI integration → Task 12.
+**Spec coverage:** every numbered component in the groomed spec's Architecture section maps to a task — `TerminalSession`/`TerminalTransport` → Task 8, `Mailbox` → Task 2, `Doorbell` → Task 3, protocol bootstrap → Task 4, `SessionHarvester` → Task 7 (+ Task 6 for the codex-specific parse), `InteractiveSession` → Task 9, per-CLI profile → Task 10, integration seam → Task 11. Readiness handshake and crash sad-path → Task 9 (`waitForOutbox`) + Task 5 (`hasLiveDescendant`). Proof-of-function bullets (turn cycle, timeout, partial outbox, crash, rollout parser, doorbell) → Tasks 2, 3, 5, 6, 9. Submit-key gate and slash-status diagnostic are already DONE per the groomed spec (cited, not re-planned). Real-CLI integration → Task 12. Manual smoke-test UI → Task 13 (added on request, mirroring the existing "Test Codex" button pattern in `hello.tsx`).
 
-**Out of scope, confirmed not planned here:** multi-worker fleet/scheduler, claude/agy profiles (deferred per the grooming conversation), automated `codex resume` recovery, Windows PID polling, webview panel rework — all inherited from the spec's Out-of-scope section, none touched by this plan.
+**Out of scope, confirmed not planned here:** multi-worker fleet/scheduler, claude/agy profiles (deferred per the grooming conversation), automated `codex resume` recovery, Windows PID polling — all inherited from the spec's Out-of-scope section, none touched by this plan. Task 13 stays inside the spec's own "webview panel rework... smoke log only" boundary: it's one manual test button reusing the existing log-list UI, not the permanent step-function panel.
 
 **Placeholder scan:** no TBD/TODO markers; every step has real code or an exact command.
 
