@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Agy Mode — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:36px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 6px;color:var(--acc)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.good{border-left-color:var(--grn)}
+  .note.warn{border-left-color:var(--yel)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  ul.steps{list-style:none;padding-left:0;margin:8px 0}
+  ul.steps li{margin:5px 0;padding-left:26px;position:relative}
+  ul.steps li:before{content:"\2610";position:absolute;left:0;color:var(--mut);font-size:16px}
+  .files{font-size:13px;color:var(--mut);margin:4px 0 8px}
+  ul{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Agy Mode <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">Second run mode for the agy adapter: drive <code>agy</code> as a live TUI in a VSCode terminal, reusing the CLI-agnostic core already built and shipped for interactive codex (<code>src/adapters/interactive/</code>). Adds exactly two new things: a shared <code>SessionInfoProbe</code> fallback (for CLIs with no readable session transcript) and <code>agyInteractive: InteractiveCliProfile</code> — proven by a real-CLI integration test alongside the existing <code>runAgy</code>.</p>
+  <div class="tags">
+    <span class="tag">2026-07-01</span>
+    <span class="tag">TDD · frequent commits</span>
+    <span class="tag">spec: interactive-agy-design (grooming-updated 2026-07-01)</span>
+    <span class="tag">5 tasks · 1 User Story</span>
+  </div>
+
+  <div class="note good"><b>Grooming context:</b> the spec skeleton marked almost every field NEEDS-RESEARCH and said not to plan until they resolved. <code>src/test/terminal-probe.test.ts</code>'s <code>agy-ultra</code> profile already answered them against a real <code>agy</code> install (confirmed passing 2026-07-01): launching <b>without</b> <code>--print</code> starts a real interactive TUI (<code>agy --dangerously-skip-permissions --new-project --add-dir &lt;cwd&gt;</code>); <code>GEMINI.md</code> is the instruction channel; submit is plain Enter (<code>"\r"</code>), not the guessed kitty escape; agy has no confirmed on-disk transcript, so <code>sessionId</code> comes from a new <code>sessionInfoPrompt</code> fallback instead.</div>
+
+  <div class="note"><b>Refine pass (2026-07-01):</b> 2 should-fix findings applied — Task 5's panel.ts wiring step moved immediately after the bridge-function generalization (previously a "run tests, expect pass" checkpoint sat between the two, but the whole-project <code>tsc</code> that <code>npm test</code> runs via <code>pretest</code> would have failed there since <code>panel.ts</code> still had the old 3-arg <code>sendInteractiveTurn</code> call); Task 1's `afterTurn()` step now notes that its local `harvested` binding changes from `const` to `let`. Declined: the "seven vs eight tests" count discrepancy (the file has eight, matching the plan's own claim — nothing to fix) and two informational/no-fix notes (a timing-constant dependency worth knowing but not touching, and a documented test-coupling tradeoff already called out in the plan as acceptable). Findings: <code>.superpowers/plan-refine/2026-07-01-interactive-agy-findings.md</code>.</div>
+
+  <div class="note warn"><b>Known gaps carried forward, by design:</b> <code>--sandbox</code> is intentionally omitted from the interactive launch argv — never exercised by the probe, and no verified mapping from <code>InteractiveOpts.sandbox</code>'s 3-way enum to agy's boolean switch. No usage/token data is available for agy (matches the spec's "likely degraded mode"). The <code>sessionInfoPrompt</code> text is reused verbatim (Vietnamese) from the probe rather than re-translated, to match exactly what was tested.</div>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li>Additive only — <code>runAgy</code> / <code>agyAdapter.run</code> unchanged.</li>
+    <li>Launch argv: <code>agy --dangerously-skip-permissions --new-project [--model &lt;m&gt;] --add-dir &lt;cwd&gt;</code> (no <code>--print</code>, no <code>--sandbox</code>), submit key <code>"\r"</code> — probe-verified.</li>
+    <li>Instruction file <code>GEMINI.md</code>; never overwritten (reuses the existing marker-append/strip bootstrap, unchanged).</li>
+    <li><code>harvest()</code> always returns <code>{}</code> — no confirmed agy transcript. <code>sessionId</code> comes only from the new <code>sessionInfoPrompt</code> fallback (<code>SessionInfoProbe</code>).</li>
+    <li>Default timeouts (inherited): <code>turnTimeoutMs</code> 300000, <code>readyTimeoutMs</code> 30000. New: <code>sessionInfoTimeoutMs</code> 90000, injectable for fast tests.</li>
+    <li>Crash detection macOS/Linux only in v1 (inherited, unchanged).</li>
+    <li>Real-CLI integration test gated behind <code>AGY_INTERACTIVE_E2E</code> (mirrors <code>AGY_E2E</code> / <code>CODEX_INTERACTIVE_E2E</code>).</li>
+  </ul>
+
+  <h2>US-1: Interactive Agy Mode</h2>
+  <p class="mut">Call <code>agyAdapter.runInteractive({cwd, workerId})</code>, get an <code>InteractiveSession</code>,
+     <code>send()</code> turns that pause or complete, watch a sparse <code>WorkerEvent</code> stream, get a
+     harvested <code>sessionId</code> via the session-info fallback (no usage — agy has none), <code>dispose()</code>
+     cleanly, and exercise all of it through a webview smoke button — proven by unit tests against a fake terminal
+     transport plus an opt-in real-CLI integration test.</p>
+
+  <div class="card">
+    <h3>Task 1 — SessionInfoProbe fallback + wire into InteractiveSession</h3>
+    <div class="files">Create <code>src/adapters/interactive/session-info-probe.ts</code> · Modify <code>interactive-session.ts</code> · Tests <code>interactive-session-info-probe.test.ts</code>, <code>interactive-session.test.ts</code></div>
+    <div class="mut">The one piece of shared core codex didn't need (its rollout JSONL is authoritative). Produces <code>probeSessionInfo()</code>: rings the doorbell with the profile's <code>sessionInfoPrompt</code>, polls for <code>outbox/session-info.json</code>, maps <code>conversationId</code> → <code>sessionId</code>. Wires it into <code>afterTurn()</code> as a fallback whenever <code>harvestSession()</code> finds no id — CLI-agnostic, any future profile with <code>sessionInfoPrompt</code> gets it for free.</div>
+    <ul class="steps">
+      <li>Write failing tests for <code>probeSessionInfo</code> (resolves on valid JSON, {} on no conversationId, retries past half-written JSON, {} on timeout)</li>
+      <li>Compile → fails · Implement <code>session-info-probe.ts</code> · <code>npm test</code> → green</li>
+      <li>Write failing wiring test in <code>interactive-session.test.ts</code> (fallback fires, sessionId surfaces on the events iterator)</li>
+      <li>Add <code>sessionInfoTimeoutMs</code> to <code>StartInteractiveDeps</code>; wire the fallback branch into <code>afterTurn()</code></li>
+      <li><code>npm test</code> → all 8 InteractiveSession + 4 probeSessionInfo cases green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 2 — agy interactive profile</h3>
+    <div class="files">Create <code>src/adapters/agy/interactive-profile.ts</code> · Test <code>agy-interactive-profile.test.ts</code></div>
+    <div class="mut">Produces <code>agyInteractive: InteractiveCliProfile</code> — probe-verified launch argv (no <code>--print</code>, no <code>--sandbox</code>), <code>GEMINI.md</code>, submit <code>"\r"</code>, <code>harvest() =&gt; {}</code>, and the exact <code>sessionInfoPrompt</code> wording the probe proved working.</div>
+    <ul class="steps">
+      <li>Write failing tests (argv shape, --model passthrough, --sandbox always absent, configEnv, sessionDir, harvest, submitSequence/instructionFile/id, sessionInfoPrompt content)</li>
+      <li>Compile → fails · Implement <code>interactive-profile.ts</code></li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 3 — Wire <code>agyAdapter.runInteractive</code></h3>
+    <div class="files">Modify <code>src/adapters/agy/agy-adapter.ts</code> · Test <code>agy-adapter-interactive-wiring.test.ts</code></div>
+    <div class="mut">One-line delegation to <code>startInteractive(agyInteractive, opts)</code>, mirrors <code>codexAdapter.runInteractive</code> exactly. <code>AgentAdapter.runInteractive</code> already exists on the shared type — no type changes needed.</div>
+    <ul class="steps">
+      <li>Write failing sanity test (<code>typeof agyAdapter.runInteractive === "function"</code>)</li>
+      <li>Wire it up · <code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 4 — Real-CLI integration proof</h3>
+    <div class="files">Create <code>src/test/agy-interactive.integration.test.ts</code></div>
+    <div class="mut">Mirrors the already-passing <code>terminal-probe.test.ts</code> <code>agy-ultra</code> scenario (pause → resume → done, session-info fallback → UUID sessionId, marker-block dispose) through the production <code>agyAdapter.runInteractive</code> path. Gated behind <code>AGY_INTERACTIVE_E2E</code>.</div>
+    <ul class="steps">
+      <li>Write the test · Run with <code>AGY_INTERACTIVE_E2E=1 npm test</code> → PASS (uses real quota)</li>
+      <li><code>npm test</code> → full suite green, this one skipped by default · Commit</li>
+      <li>Link the roadmap entry's <code>plan</code> field · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 5 — Generalize the webview bridge + agy smoke button</h3>
+    <div class="files">Modify <code>protocol.ts</code>, <code>webview-bridge.ts</code>, <code>panel.ts</code>, <code>hello.tsx</code>, <code>webview-bridge-interactive.test.ts</code></div>
+    <div class="mut"><code>startInteractiveTestToWebview</code>/<code>sendInteractiveTurn</code> hardcoded <code>codexInteractiveLog</code> — generalized to derive the log channel from the adapter id (<code>logType</code> param), so agy gets its own <code>agyInteractiveLog</code> channel for free. <code>CodexInteractiveForm</code> becomes a generic <code>InteractiveForm</code> driven by an <code>INTERACTIVE_CLIS</code> config array (mirrors the existing <code>CliForm</code>/<code>CLIS</code> pattern), rendering both Codex and Agy interactive forms.</div>
+    <ul class="steps">
+      <li>Write failing tests (agy session streams to <code>agyInteractiveLog</code>; <code>sendInteractiveTurn</code> takes a required <code>logType</code>)</li>
+      <li>Add <code>agyInteractiveLog</code> / <code>testAgyInteractive*</code> message types to <code>protocol.ts</code></li>
+      <li>Generalize the two bridge functions in <code>webview-bridge.ts</code></li>
+      <li>Wire agy's message handlers + session tracking in <code>panel.ts</code> <span class="mut">(done immediately after the bridge change, before the next compile/test checkpoint — <code>panel.ts</code>'s old 3-arg <code>sendInteractiveTurn</code> call would otherwise fail the whole-project <code>tsc</code> that <code>npm test</code> runs via <code>pretest</code>)</span></li>
+      <li><code>npm test</code> → green now that bridge + panel agree on the 4-arg signature</li>
+      <li>Replace <code>CodexInteractiveForm</code> with generic <code>InteractiveForm</code> + <code>INTERACTIVE_CLIS</code>, render both in <code>HelloView</code></li>
+      <li><code>npm test</code> + <code>npm run check-types</code> → green · Manual smoke check (Start/Send/Dispose for both CLIs) · Commit</li>
+    </ul>
+  </div>
+
+  <h2>Self-review highlights</h2>
+  <ul>
+    <li><b>Spec coverage:</b> every NEEDS-RESEARCH row resolved and cited; the frame's "Optional SessionInfoProbe" → Task 1; per-CLI profile → Task 2; integration seam → Task 3; acceptance gate → Task 4; requested smoke UI → Task 5 (generalized, not duplicated).</li>
+    <li><b>Out of scope, confirmed not planned:</b> multi-worker fleet, claude interactive profile, automated recovery, Windows PID polling, agy usage/token harvesting.</li>
+    <li><b>Type consistency:</b> <code>agyInteractive</code> matches <code>InteractiveCliProfile</code> exactly; <code>StartInteractiveDeps.sessionInfoTimeoutMs</code> and <code>InteractiveLogType</code> each defined once, consumed identically everywhere.</li>
+  </ul>
+
+  <footer>Plan file: <code>docs/superpowers/plans/2026-07-01-interactive-agy.md</code> — this HTML is a rendered companion; the markdown is the source of truth.</footer>
+</div>
+</body>
+</html>
