@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Codex Mode — Implementation Plan</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:36px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 6px;color:var(--acc)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.good{border-left-color:var(--grn)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  ul.steps{list-style:none;padding-left:0;margin:8px 0}
+  ul.steps li{margin:5px 0;padding-left:26px;position:relative}
+  ul.steps li:before{content:"\2610";position:absolute;left:0;color:var(--mut);font-size:16px}
+  .files{font-size:13px;color:var(--mut);margin:4px 0 8px}
+  ul{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Codex Mode <span class="mut">— Implementation Plan</span></h1>
+  <p class="sub">Second run mode for the codex adapter: drive <code>codex</code> as a live TUI in a VSCode terminal — multi-turn steering with pause/resume in one session — built as a CLI-agnostic core (<code>src/adapters/interactive/</code>) plus one codex profile, proven by a real-CLI integration test alongside the existing <code>runCodex</code>.</p>
+  <div class="tags">
+    <span class="tag">2026-07-01</span>
+    <span class="tag">TDD · frequent commits</span>
+    <span class="tag">spec: interactive-codex-design (groomed 2026-07-01)</span>
+    <span class="tag">12 tasks · 1 User Story</span>
+  </div>
+
+  <div class="note good"><b>Grooming context:</b> <code>src/test/terminal-probe.test.ts</code> already proved the mechanism (launch argv, submit key, mailbox pause/resume/done, <code>/status</code>) against a real <code>codex-cli 0.142.4</code> install on 2026-07-01. This plan builds the production code path (<code>InteractiveSession</code>, <code>Mailbox</code>, etc.) that the probe's ad hoc helpers stand in for, and closes a grooming-time safety gap: instruction-file bootstrap now appends/strips a marker block instead of overwriting a real <code>AGENTS.md</code>.</div>
+
+  <div class="note"><b>Refine pass (2026-07-01):</b> 4 should-fix findings applied — deduplicated <code>readFileIfExists</code> into <code>fs-helpers.ts</code> (Tasks 2/4); <code>onDidClose()</code>'s returned <code>dispose()</code> now actually unsubscribes (Tasks 3/8); Task 9 resolves its <code>vscode</code>/<code>process-watch</code> defaults via dynamic <code>import()</code> instead of a static top-level import, so the core state machine has no hard load-time coupling to either; Task 10 now shows the fully merged file instead of a diff fragment. Declined: splitting US-1 (no intermediate piece is independently user-testable). Findings: <code>.superpowers/plan-refine/2026-07-01-interactive-codex-findings.md</code>.</div>
+
+  <h2>Global constraints</h2>
+  <ul>
+    <li>Additive only — <code>runCodex</code> / <code>codexAdapter.run</code> unchanged.</li>
+    <li>Launch argv: <code>codex -C &lt;cwd&gt; [-m &lt;model&gt;] -s &lt;sandbox&gt; -a never -c disable_paste_burst=true -c 'tui.keymap.composer.submit="tab"' -c 'tui.keymap.composer.queue="ctrl-q"'</code>, submit key <code>"\t"</code> — probe-verified.</li>
+    <li>Default timeouts: <code>turnTimeoutMs</code> 300000, <code>readyTimeoutMs</code> 30000 (turn-1 only, one retry ping on expiry).</li>
+    <li>Crash detection (<code>ps -Ao pid,ppid,comm</code> descendant walk) is macOS/Linux only in v1.</li>
+    <li>Mailbox reader is a poll loop, not <code>vscode.FileSystemWatcher</code> (groomed — one mechanism, not two).</li>
+    <li>Protocol bootstrap never overwrites a real instruction file; appends a marker block, strips it on <code>dispose()</code>.</li>
+    <li>Real-CLI integration test gated behind <code>CODEX_INTERACTIVE_E2E</code> (mirrors the existing <code>CODEX_E2E</code> convention).</li>
+  </ul>
+
+  <h2>US-1: Interactive Codex Mode</h2>
+  <p class="mut">Call <code>codexAdapter.runInteractive({cwd, workerId})</code>, get an <code>InteractiveSession</code>,
+     <code>send()</code> turns that pause or complete, watch a sparse <code>WorkerEvent</code> stream, read harvested
+     <code>sessionId</code>/usage from codex's own rollout JSONL, and <code>dispose()</code> cleanly — proven by unit
+     tests against a fake terminal transport plus an opt-in real-CLI integration test.</p>
+
+  <div class="card">
+    <h3>Task 1 — Shared interactive types + shell quoting</h3>
+    <div class="files">Create <code>src/adapters/interactive/types.ts</code>, <code>shell.ts</code> · Test <code>interactive-shell.test.ts</code></div>
+    <div class="mut">Produces <code>InteractiveOpts</code>, <code>TurnResult</code>, <code>InteractiveSession</code>, <code>InteractiveCliProfile</code>, <code>TerminalTransport</code>/<code>TerminalFactory</code>, <code>shellQuote()</code>, <code>buildLaunchCommand()</code>.</div>
+    <ul class="steps">
+      <li>Create types.ts (pure declarations, no test)</li>
+      <li>Write failing shellQuote/buildLaunchCommand tests</li>
+      <li>Compile → fails (module missing)</li>
+      <li>Implement shell.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 2 — Mailbox</h3>
+    <div class="files">Create <code>src/adapters/interactive/fs-helpers.ts</code>, <code>mailbox.ts</code> · Test <code>interactive-mailbox.test.ts</code></div>
+    <div class="mut">Produces <code>readFileIfExists()</code> (shared with Task 4), <code>Mailbox</code>: dirs, <code>.gitignore</code> append, <code>writeInbox()</code>, single-attempt <code>tryReadOutbox()</code>, <code>dispose()</code>.</div>
+    <ul class="steps">
+      <li>Write failing tests (write/read, half-written JSON → undefined then parsed, gitignore idempotence, dispose)</li>
+      <li>Compile → fails · Implement Mailbox</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 3 — FakeTerminalTransport double + Doorbell</h3>
+    <div class="files">Create <code>src/test/helpers/fake-terminal-transport.ts</code>, <code>src/adapters/interactive/doorbell.ts</code> · Test <code>interactive-doorbell.test.ts</code></div>
+    <div class="mut">Produces <code>FakeTerminalTransport</code> (call log + <code>simulateClose()</code>), <code>ring()</code>.</div>
+    <ul class="steps">
+      <li>Write failing test asserting exact show → sendText → sendSequence order</li>
+      <li>Compile → fails · Implement doorbell.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 4 — Instruction-file bootstrap/teardown</h3>
+    <div class="files">Create <code>src/adapters/interactive/instruction-file.ts</code> · Test <code>interactive-instruction-file.test.ts</code></div>
+    <div class="mut">Produces <code>bootstrapInstructionFile()</code> / <code>teardownInstructionFile()</code> — marker-delimited append/strip, never overwrite. Reuses Task 2's <code>readFileIfExists()</code>. Teardown normalizes trailing whitespace to one newline (documented, not a bug).</div>
+    <ul class="steps">
+      <li>Write failing tests (create-from-empty + full teardown removal; append-then-restore on real content; idempotent double-bootstrap)</li>
+      <li>Compile → fails · Implement instruction-file.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 5 — Crash detection</h3>
+    <div class="files">Create <code>src/adapters/interactive/process-watch.ts</code> · Test <code>interactive-process-watch.test.ts</code></div>
+    <div class="mut">Produces <code>hasLiveDescendant(pid, matchName)</code> via <code>ps -Ao pid,ppid,comm</code> descendant walk. macOS/Linux only.</div>
+    <ul class="steps">
+      <li>Write failing tests using a real spawned <code>sleep</code> child (found while alive, not found after kill)</li>
+      <li>Compile → fails · Implement process-watch.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 6 — Codex rollout parser</h3>
+    <div class="files">Create <code>src/adapters/codex/interactive-profile.ts</code> · Test <code>codex-rollout-parser.test.ts</code></div>
+    <div class="mut">Produces <code>parseCodexRollout(text): HarvestResult</code>. Fixture is <b>real</b> data captured from the probe's own rollout file (<code>codex-cli 0.142.4</code>).</div>
+    <ul class="steps">
+      <li>Write failing tests against real captured session_meta + token_count lines (sessionId, cumulative usage, rate limits, latest-wins, noise-tolerant)</li>
+      <li>Compile → fails · Implement parseCodexRollout</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 7 — Session harvester</h3>
+    <div class="files">Create <code>src/adapters/interactive/session-harvester.ts</code> · Test <code>interactive-session-harvester.test.ts</code></div>
+    <div class="mut">Produces <code>harvestSession(profile, configDir)</code> — generic recursive newest-file finder + <code>profile.harvest()</code> delegation.</div>
+    <ul class="steps">
+      <li>Write failing tests (missing dir → {}, newest file across nested dirs via mtime)</li>
+      <li>Compile → fails · Implement session-harvester.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 8 — VscodeTerminalTransport</h3>
+    <div class="files">Create <code>src/adapters/interactive/vscode-terminal-transport.ts</code> · Test <code>interactive-vscode-terminal-transport.test.ts</code></div>
+    <div class="mut">Produces <code>VscodeTerminalTransport</code> / <code>VscodeTerminalFactory</code> — the only file touching the real <code>vscode</code> API directly.</div>
+    <ul class="steps">
+      <li>Write failing test: create a real terminal, resolve processId, dispose cleanly (no CLI needed)</li>
+      <li>Compile → fails · Implement vscode-terminal-transport.ts</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 9 — InteractiveSession state machine + startInteractive</h3>
+    <div class="files">Create <code>src/adapters/interactive/interactive-session.ts</code> · Test <code>interactive-session.test.ts</code></div>
+    <div class="mut">The core orchestrator: turn cycle, readiness retry, timeout, crash detection, session-id/usage harvesting, sparse <code>WorkerEvent</code> iterator — all driven through injected fakes. Default <code>terminalFactory</code>/<code>checkAlive</code> resolve via dynamic <code>import()</code> of Tasks 5/8, not a static import — the core has no hard load-time dependency on <code>vscode</code> or <code>process-watch</code>.</div>
+    <ul class="steps">
+      <li>Write failing tests: paused→done turn cycle with harvested usage/sessionId + event ordering; send-after-done rejects; timeout with readiness retry; crashed via terminal close; crashed via checkAlive; error classification; dispose strips instruction file + removes mailbox</li>
+      <li>Compile → fails · Implement interactive-session.ts (EventEmitter-based iterator, poll-based waitForOutbox interleaving crash checks, dynamic-import defaults)</li>
+      <li><code>npm test</code> → all 7 cases green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 10 — Codex interactive profile</h3>
+    <div class="files">Modify <code>src/adapters/codex/interactive-profile.ts</code> · Test <code>codex-interactive-profile.test.ts</code></div>
+    <div class="mut">Produces <code>codexInteractive: InteractiveCliProfile</code> — launch argv matches the probe-verified command exactly. Plan shows the fully merged file (with Task 6's <code>parseCodexRollout</code>) to remove import-merging ambiguity.</div>
+    <ul class="steps">
+      <li>Write failing shape tests (launchArgv exact match, -m/-s defaults, configEnv, sessionDir, submitSequence/instructionFile)</li>
+      <li>Compile → fails · Add codexInteractive export</li>
+      <li><code>npm test</code> → green · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 11 — Wire codexAdapter.runInteractive</h3>
+    <div class="files">Modify <code>src/adapters/types.ts</code>, <code>src/adapters/codex/codex-adapter.ts</code> · Test <code>codex-adapter-interactive-wiring.test.ts</code></div>
+    <div class="mut">Produces <code>AgentAdapter.runInteractive?()</code>, wired as <code>(opts) =&gt; startInteractive(codexInteractive, opts)</code>.</div>
+    <ul class="steps">
+      <li>Write failing sanity test (function is exposed)</li>
+      <li>Add optional method to AgentAdapter + wire codexAdapter</li>
+      <li><code>npm test</code> → green · <code>npm run check-types</code> → no import cycle · Commit</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Task 12 — Real-CLI integration proof</h3>
+    <div class="files">Create <code>src/test/codex-interactive.integration.test.ts</code></div>
+    <div class="mut">Mirrors the passing <code>terminal-probe.test.ts</code> scenario (pause → done) but drives it through <code>codexAdapter.runInteractive</code> — the production code path — instead of probe-local helpers.</div>
+    <ul class="steps">
+      <li>Write the test, gated by <code>CODEX_INTERACTIVE_E2E</code></li>
+      <li><code>CODEX_INTERACTIVE_E2E=1 npm test</code> → real-CLI proof green</li>
+      <li><code>npm test</code> → full fast suite still green, integration suite skipped</li>
+      <li>Commit · update roadmap <code>plan</code> field</li>
+    </ul>
+  </div>
+
+  <div class="note">Full code for every step lives in the markdown plan
+     (<code>docs/superpowers/plans/2026-07-01-interactive-codex.md</code>) — the source of truth.
+     Claude and Antigravity (agy) interactive profiles are deferred to their own plans once their
+     skeleton specs graduate past open VERIFY/RESEARCH items — see
+     <code>docs/superpowers/specs/2026-06-30-interactive-claude-design.md</code> and
+     <code>2026-06-30-interactive-agy-design.md</code>.</div>
+
+  <footer>Implementation plan companion · rendered for human readers.</footer>
+</div>
+</body>
+</html>
