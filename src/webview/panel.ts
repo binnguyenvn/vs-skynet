@@ -2,9 +2,10 @@ import * as vscode from "vscode";
 import { agyAdapter } from "../adapters/agy/agy-adapter";
 import { claudeAdapter } from "../adapters/claude/claude-adapter";
 import { codexAdapter } from "../adapters/codex/codex-adapter";
-import { streamAdapterTestToWebview } from "../adapters/webview-bridge";
+import { sendInteractiveTurn, startInteractiveTestToWebview, streamAdapterTestToWebview } from "../adapters/webview-bridge";
 import { buildWebviewHtml, nonce } from "./html";
 import type { TestFields, WebviewToExtension } from "./protocol";
+import type { InteractiveSession } from "../adapters/interactive/types";
 
 export function openWebview(
   context: vscode.ExtensionContext,
@@ -34,6 +35,8 @@ export function openWebview(
     viewId,
   });
 
+  let codexInteractiveSession: InteractiveSession | undefined;
+
   webview.onDidReceiveMessage(
     (msg: WebviewToExtension) => {
       if (msg.type === "hello") {
@@ -54,6 +57,26 @@ export function openWebview(
       }
       if (msg.type === "testClaude") {
         void streamAdapterTestToWebview(claudeAdapter, webview, cwd(), clean(msg.fields));
+      }
+      if (msg.type === "testCodexInteractiveStart") {
+        const fields = clean(msg.fields);
+        void (async () => {
+          codexInteractiveSession = await startInteractiveTestToWebview(codexAdapter, webview, {
+            cwd: cwd(),
+            workerId: fields.workerId || "webview",
+            model: fields.model,
+            configDir: fields.configDir,
+          });
+        })();
+      }
+      if (msg.type === "testCodexInteractiveSend") {
+        void sendInteractiveTurn(codexInteractiveSession, webview, msg.prompt);
+      }
+      if (msg.type === "testCodexInteractiveDispose") {
+        const session = codexInteractiveSession;
+        codexInteractiveSession = undefined;
+        void session?.dispose();
+        void webview.postMessage({ type: "codexInteractiveLog", level: "info", text: "disposed" });
       }
     },
     undefined,

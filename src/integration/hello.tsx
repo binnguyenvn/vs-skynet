@@ -27,6 +27,12 @@ const COMMON_FIELDS: FieldDef[] = [
   { key: "configDir", label: "configDir", placeholder: "isolate account, e.g. ~/.agents/cc-thai" },
 ];
 
+const INTERACTIVE_FIELDS: FieldDef[] = [
+  { key: "workerId", label: "workerId", placeholder: "webview" },
+  { key: "model", label: "Model", placeholder: "(adapter default)" },
+  { key: "configDir", label: "configDir", placeholder: "isolate account, e.g. ~/.agents/codex-plus" },
+];
+
 type TestMsg = Extract<WebviewToExtension, { fields?: TestFields }>;
 
 interface CliConfig {
@@ -114,6 +120,97 @@ function CliForm({ config }: { config: CliConfig }) {
   );
 }
 
+function CodexInteractiveForm() {
+  const [values, setValues] = useState<TestFields>({ workerId: "webview" });
+  const [prompt, setPrompt] = useState("Reply by writing the outbox JSON with status paused and summary ok.");
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [running, setRunning] = useState(false);
+
+  useEffect(
+    () =>
+      onMessage((msg) => {
+        if (isLog(msg) && msg.type === "codexInteractiveLog") {
+          setLogs((current) => [...current, { level: msg.level, text: msg.text }]);
+          if (msg.text === "disposed" || msg.level === "error") {
+            setRunning(false);
+          }
+        }
+      }),
+    []
+  );
+
+  const start = () => {
+    setLogs([]);
+    setRunning(true);
+    postMessage({ type: "testCodexInteractiveStart", fields: values });
+  };
+
+  const send = () => postMessage({ type: "testCodexInteractiveSend", prompt });
+
+  const dispose = () => {
+    setRunning(false);
+    postMessage({ type: "testCodexInteractiveDispose" });
+  };
+
+  return (
+    <div className="w-full rounded-md border bg-muted/30 p-3">
+      <div className="mb-2 text-sm font-medium">Codex Interactive</div>
+      <div className="flex flex-col gap-2">
+        {INTERACTIVE_FIELDS.map((f) => (
+          <div key={f.key} className="flex flex-col gap-1">
+            <Label htmlFor={`codex-interactive-${f.key}`} className="text-xs">
+              {f.label}
+            </Label>
+            <Input
+              id={`codex-interactive-${f.key}`}
+              value={values[f.key] ?? ""}
+              placeholder={f.placeholder}
+              onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+            />
+          </div>
+        ))}
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="codex-interactive-prompt" className="text-xs">
+            Turn prompt
+          </Label>
+          <Input
+            id="codex-interactive-prompt"
+            value={prompt}
+            placeholder="Turn prompt"
+            onChange={(e) => setPrompt(e.target.value)}
+          />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button onClick={start} disabled={running} variant="secondary">
+          <TerminalIcon />
+          {running ? "Interactive Running..." : "Start Interactive"}
+        </Button>
+        <Button onClick={send} disabled={!running} variant="secondary">
+          Send Turn
+        </Button>
+        <Button onClick={dispose} disabled={!running} variant="secondary">
+          Dispose
+        </Button>
+      </div>
+      <div className="mt-3 font-mono text-xs whitespace-pre-wrap break-words flex flex-col gap-1">
+        {logs.length === 0 ? (
+          <span className="text-muted-foreground">Click Start Interactive to stream logs here.</span>
+        ) : (
+          logs.map((line, index) => (
+            <div
+              key={`${line.text}-${index}`}
+              className={line.level === "error" ? "text-destructive" : "text-foreground"}
+            >
+              {line.text}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function HelloView() {
   const [reply, setReply] = useState("");
 
@@ -137,6 +234,7 @@ export function HelloView() {
       {CLIS.map((config) => (
         <CliForm key={config.type} config={config} />
       ))}
+      <CodexInteractiveForm />
     </div>
   );
 }
