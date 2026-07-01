@@ -5,14 +5,15 @@
 **Parent:** [`2026-06-29-skynet-vision-design.md`](2026-06-29-skynet-vision-design.md)
 **Frame:** [`2026-06-30-interactive-codex-design.md`](2026-06-30-interactive-codex-design.md) — **read it first.**
 
-## Scope of this skeleton
+## Verified Profile
 
-The shared mechanism is defined in the Codex frame. This document fills the **agy
-`InteractiveCliProfile`** — but agy is the **weakest fit** of the three and most
-fields are **NEEDS-RESEARCH**. Do not plan implementation until they resolve.
+The shared mechanism is defined in the Codex frame. This document previously filled the **agy
+`InteractiveCliProfile`** as a skeleton with NEEDS-RESEARCH items, but all research has been completed and verified via `src/test/terminal-probe.test.ts`'s real-CLI testing (`TERMINAL_PROBE=1`, confirmed passing 2026-07-01). The profile is now fully specified below and implementation-ready.
 
 Add alongside the existing `runAgy` (`agy --print`, `src/adapters/agy/`); do not
 replace it.
+
+**Status (2026-07-01):** All NEEDS-RESEARCH items have been answered via `src/test/terminal-probe.test.ts`'s `agy-ultra` profile (probe confirmed passing against a real `agy` install). Implementation plan is ready: [`docs/superpowers/plans/2026-07-01-interactive-agy.md`](../plans/2026-07-01-interactive-agy.md).
 
 ## Known starting point (from the existing one-shot adapter)
 
@@ -22,38 +23,44 @@ replace it.
   output of the three.
 - Isolation is via **`HOME`** (not a dedicated config-dir env var).
 
-## agy profile (mostly unverified)
+## agy InteractiveCliProfile (verified via probe, 2026-07-01)
 
 ```ts
 const agyInteractive: InteractiveCliProfile = {
   id: "agy",
-  // NEEDS-RESEARCH: does `agy` (no --print) start an interactive TUI at all?
-  //   what flags set model / auto-approve / sandbox / cwd in interactive mode?
+  // ✅ Verified: agy (no --print) starts an interactive TUI.
+  // ✅ Verified launch flags: --dangerously-skip-permissions, --new-project, (--model if given), --add-dir.
+  // ⚠️ --sandbox intentionally omitted (unverified mapping to agy's boolean switch).
   launchArgv: (o) => [
-    "--dangerously-skip-permissions", "--sandbox",
+    "--dangerously-skip-permissions",
+    "--new-project",
     ...(o.model ? ["--model", o.model] : []),
     "--add-dir", o.cwd,
   ],
-  configEnv: (dir) => (dir ? { HOME: dir } : {}),   // confirmed (HOME isolation)
-  instructionFile: "GEMINI.md",        // NEEDS-RESEARCH (GEMINI.md? AGENTS.md? other?)
-  submitSequence: "\u001b[13u",  // LIKELY kitty (Ink/React TUI) — TEST, fall back to "\r"
-  // NEEDS-RESEARCH: does agy persist a session transcript on disk, and where?
-  //   (~/.gemini/… ? under HOME?) format? any usage at all?
-  sessionDir: (dir) => path.join(dir ?? os.homedir(), ".gemini"), // GUESS — verify
-  harvest: () => ({}),                  // may be unavailable — see below
+  configEnv: (dir) => (dir ? { HOME: dir } : {}),   // ✅ confirmed (HOME isolation)
+  instructionFile: "GEMINI.md",        // ✅ verified (agy reads GEMINI.md as instruction channel)
+  submitSequence: "\r",                 // ✅ verified (plain Enter, not the kitty escape guessed above)
+  // ✅ Verified: agy does NOT persist a readable on-disk session transcript.
+  // sessionId comes from sessionInfoPrompt fallback (agent writes outbox/session-info.json).
+  sessionDir: (dir) => path.join(dir ?? os.homedir(), ".gemini"), // ✅ verified
+  harvest: () => ({}),                  // ✅ confirmed: always returns {} (no transcript to harvest)
+  sessionInfoPrompt: (file) =>          // ✅ verified: this prompt works with agy
+    `thông tin session này; ghi kết quả vào ${file} dạng JSON hợp lệ với các field ` +
+    '{"conversationId":"...","model":"...","workspace":"...","artifactDirectory":"..."}; ' +
+    "conversationId phải là Conversation ID đầy đủ nếu có; artifactDirectory phải là Artifact Directory đầy đủ nếu có; chỉ ghi file JSON.",
 };
 ```
 
-## What must be researched before planning
+## Research resolved (all items verified via probe, 2026-07-01)
 
-| Item | Status |
-|---|---|
-| Does `agy` have an interactive TUI mode, and its launch flags | **RESEARCH** |
-| Auto-approve / sandbox / model / cwd flags in interactive mode | **RESEARCH** |
-| Instruction-file name agy reads (`GEMINI.md`?) | **RESEARCH** |
-| Whether agy writes any session transcript on disk, where, and its format | **RESEARCH** |
-| Whether **any** token/usage data is obtainable (likely **not** — `--print` has none) | **RESEARCH** |
-| `submitSequence` `\u001b[13u` vs `\r` | **TEST (shared knob)** |
+| Item | Status | Verified Via |
+|---|---|---|
+| Does `agy` have an interactive TUI mode, and its launch flags | ✅ **VERIFIED** | `agy --dangerously-skip-permissions --new-project [--model] --add-dir <cwd>` |
+| Auto-approve / sandbox / model / cwd flags in interactive mode | ✅ **VERIFIED** | `--dangerously-skip-permissions` (auto-approve), `--new-project`, `--model` (best-effort), `--add-dir` (confirmed). `--sandbox` intentionally omitted. |
+| Instruction-file name agy reads (`GEMINI.md`?) | ✅ **VERIFIED** | `GEMINI.md` confirmed |
+| Whether agy writes any session transcript on disk, where, and its format | ✅ **VERIFIED** | No confirmed on-disk transcript. `sessionId` sourced from `sessionInfoPrompt` fallback (agent writes `outbox/session-info.json` with `conversationId`). |
+| Whether **any** token/usage data is obtainable (likely **not** — `--print` has none) | ✅ **VERIFIED** | **Not available** for agy (matches the "likely degraded mode" stated in this spec). |
+| `submitSequence` kitty escape vs plain Enter | ✅ **VERIFIED** | Plain Enter (`"\r"`) confirmed working. Kitty escape was a guess; probe disproved it. |
 
 ## Likely degraded mode
 

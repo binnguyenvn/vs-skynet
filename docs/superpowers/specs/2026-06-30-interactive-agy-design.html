@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Agy Adapter — Design Specification</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:980px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:28px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:19px;margin:36px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 6px;color:var(--acc)}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.good{border-left-color:var(--grn)}
+  .note.warn{border-left-color:var(--yel)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:14px 0}
+  table{border-collapse:collapse;width:100%;margin:12px 0}
+  table th,table td{border:1px solid var(--line);padding:8px 12px;text-align:left}
+  table th{background:var(--panel2);font-weight:600;color:var(--acc)}
+  table td{font-size:13px}
+  ul{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Agy Adapter <span class="mut">— Design Specification</span></h1>
+  <p class="sub">Second run mode for the agy adapter: drive <code>agy</code> as a live TUI in a VSCode terminal. Reuses the CLI-agnostic core already built for interactive codex. All research questions resolved via real-CLI probe testing (2026-07-01). Implementation ready: see the paired implementation plan.</p>
+  <div class="tags">
+    <span class="tag">2026-06-30 (updated 2026-07-01)</span>
+    <span class="tag">Verified via probe</span>
+    <span class="tag">Interactive TUI mode</span>
+    <span class="tag">Implementation ready</span>
+  </div>
+
+  <div class="note good"><b>Status update (2026-07-01):</b> All NEEDS-RESEARCH items from the original skeleton have been answered via <code>src/test/terminal-probe.test.ts</code>'s <code>agy-ultra</code> profile. The profile is now fully specified and verified against a real <code>agy</code> install. Implementation plan ready: <code>docs/superpowers/plans/2026-07-01-interactive-agy.md</code>.</div>
+
+  <h2>Overview</h2>
+  <p>This spec defines the agy-specific seam of the interactive adapter framework. The shared mechanism (mailbox, doorbell, session harvesting, state machine) is defined in the canonical <code>interactive-codex-design.md</code> frame. This document fills only the per-CLI profile: launch argv, env isolation, instruction file, submit key, session directory, and harvest logic.</p>
+
+  <h2>Verified Profile</h2>
+  <p>All fields verified via <code>terminal-probe.test.ts</code> (`TERMINAL_PROBE=1`, passed 2026-07-01):</p>
+
+  <div class="card">
+    <h3>Launch argv</h3>
+    <p><code>agy --dangerously-skip-permissions --new-project [--model M] --add-dir &lt;cwd&gt;</code></p>
+    <p class="mut">Note: <code>--sandbox</code> intentionally omitted — unverified mapping between <code>InteractiveOpts.sandbox</code> (3-way enum) and agy's boolean switch. No approved mapping exists.</p>
+  </div>
+
+  <div class="card">
+    <h3>Env isolation &amp; instruction channel</h3>
+    <ul>
+      <li><code>HOME</code> env var relocates config/session dir (same pattern as one-shot adapter)</li>
+      <li>Instruction file: <code>GEMINI.md</code> (read by agy as instructions on launch)</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>Submit sequence &amp; session handling</h3>
+    <ul>
+      <li>Submit key: plain Enter (<code>"\r"</code>) — original skeleton guessed kitty escape; probe disproved it</li>
+      <li><b>No on-disk session transcript:</b> agy does not persist a readable session rollout/JSONL (unlike codex)</li>
+      <li><b>Session metadata fallback:</b> <code>sessionInfoPrompt</code> asks the agent to write <code>outbox/session-info.json</code> with <code>conversationId</code>, which becomes the harvested <code>sessionId</code>. Prompt text is Vietnamese (probe-tested wording).</li>
+      <li>Session dir: <code>~/.gemini</code> (default) or <code>{configDir}/.gemini</code> (when isolated)</li>
+    </ul>
+  </div>
+
+  <h2>Research resolved</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Status</th>
+        <th>Verified Via</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Interactive TUI mode existence &amp; launch flags</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td><code>agy --dangerously-skip-permissions --new-project [--model] --add-dir &lt;cwd&gt;</code></td>
+      </tr>
+      <tr>
+        <td>Auto-approve / model / cwd flags in interactive mode</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td><code>--dangerously-skip-permissions</code> (auto-approve), <code>--new-project</code>, <code>--model</code> (best-effort), <code>--add-dir</code> (confirmed)</td>
+      </tr>
+      <tr>
+        <td>Instruction file name (<code>GEMINI.md</code>?)</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td><code>GEMINI.md</code> confirmed as the instruction channel</td>
+      </tr>
+      <tr>
+        <td>On-disk session transcript persistence</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td><b>Not persisted.</b> <code>sessionId</code> sourced from <code>sessionInfoPrompt</code> fallback (agent writes <code>outbox/session-info.json</code>)</td>
+      </tr>
+      <tr>
+        <td>Token / usage data availability</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td><b>Not available.</b> Matches the spec's stated "likely degraded mode"</td>
+      </tr>
+      <tr>
+        <td>Submit sequence (kitty escape vs plain Enter)</td>
+        <td>✅ <b>VERIFIED</b></td>
+        <td>Plain Enter (<code>"\r"</code>) confirmed. Kitty escape was an unfounded guess.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Known limitation: degraded mode</h2>
+  <p>Because agy does not expose a readable on-disk session transcript (unlike codex's rollout JSONL), the interactive session runs <b>without automatic token/usage reporting.</b> The turn boundary still works (the agent writes <code>outbox/turn-N.json</code> per the shared contract), but harvested metadata is unavailable. This mirrors the existing one-shot agy adapter, which already stubs usage.</p>
+
+  <p>The file-based mailbox protocol is what makes interactive agy viable at all — it sidesteps the original weakness of <code>--print</code> plain-text scraping.</p>
+
+  <h2>Out of scope (inherited from frame)</h2>
+  <ul>
+    <li>Multi-worker fleet / scheduler (v1 has single <code>workerId</code> per session)</li>
+    <li>Claude / other CLI interactive profiles (separate skeleton specs)</li>
+    <li>Automated crash/timeout recovery via resume</li>
+    <li>Windows child-PID polling (macOS/Linux only in v1)</li>
+  </ul>
+
+  <h2>Implementation</h2>
+  <p>See the paired implementation plan: <code>docs/superpowers/plans/2026-07-01-interactive-agy.md</code>. The plan is 5 tasks: (1) a shared <code>SessionInfoProbe</code> fallback for the interactive core, (2) <code>agyInteractive</code> profile, (3) one-line wiring on <code>agyAdapter.runInteractive</code>, (4) real-CLI integration test, and (5) generalization of the webview smoke-test bridge for multi-CLI support.</p>
+
+  <footer>Spec file: <code>docs/superpowers/specs/2026-06-30-interactive-agy-design.md</code> — this HTML is a rendered companion; the markdown is the source of truth.</footer>
+</div>
+</body>
+</html>

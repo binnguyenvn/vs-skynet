@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interactive Claude Adapter — Design</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --tx:#e6edf3; --mut:#9aa7b4; --acc:#58a6ff; --grn:#3fb950; --yel:#d29922;
+    --red:#f85149; --pur:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  h2{font-size:21px;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{color:var(--tx)} .mut{color:var(--mut)}
+  a{color:var(--acc);text-decoration:none} a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:5px;color:#c9d6e3}
+  pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;
+    font-family:var(--mono);font-size:12.5px;color:#c9d6e3}
+  .sub{color:var(--mut);font-size:14px;margin:0 0 10px}
+  .tags{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0}
+  .tag{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--mut)}
+  .note{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--acc);
+    border-radius:8px;padding:12px 16px;margin:16px 0;font-size:14px}
+  .note.warn{border-left-color:var(--yel)} .note.good{border-left-color:var(--grn)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  ul,ol{padding-left:22px} li{margin:3px 0}
+  footer{margin-top:48px;color:var(--mut);font-size:12.5px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Interactive Claude Adapter <span class="mut">— Design (groomed)</span></h1>
+  <p class="sub">Adapters · the Claude <code>InteractiveCliProfile</code> for the shared interactive-terminal core, verified against a real <code>claude</code> install.</p>
+  <div class="tags">
+    <span class="tag">2026-06-30 · groomed 2026-07-01</span>
+    <span class="tag">claude 2.1.197 (Ink TUI)</span>
+    <span class="tag">parent: skynet-vision-design</span>
+    <span class="tag">frame: interactive-codex-design</span>
+  </div>
+
+  <h2>Scope of this skeleton</h2>
+  <p>The mechanism (mailbox + doorbell + file-based turn boundary, <code>SessionHarvester</code>,
+     sad-path state machine, <code>InteractiveSession</code>/<code>TurnResult</code> shapes, proof strategy) is
+     <b>defined once in the Codex frame</b> and shared verbatim. This document only fills the <b>Claude
+     <code>InteractiveCliProfile</code></b> and records what was verified against the real CLI before a plan is
+     written.</p>
+  <div class="note">
+    <b>Add alongside, do not replace.</b> The existing <code>runClaude</code> (<code>claude -p … --output-format
+    stream-json</code>, <code>src/adapters/claude/</code>) stays for fast one-shot tasks. Interactive mode is a new
+    sibling, not a rewrite.
+  </div>
+
+  <h2>Sources</h2>
+  <ul>
+    <li><code>claude --help</code> (installed <code>claude</code> 2.1.197).</li>
+    <li><b>This session's own live transcript</b> — the Claude Code CLI writing this document is itself a running
+        <code>claude</code> session, so its own on-disk JSONL under
+        <code>$CLAUDE_CONFIG_DIR/projects/&lt;slug&gt;/&lt;sessionId&gt;.jsonl</code> (config dir
+        <code>~/.agents/cc-tu</code>) is real, unstaged production evidence for the transcript path, slug rule,
+        incremental-write behavior, and JSONL schema — no synthetic fixture needed.</li>
+    <li><code>src/test/terminal-probe.test.ts</code> (<code>TERMINAL_PROBE=1</code>), extended with a
+        <code>claude</code> profile and run against a real <code>claude</code> install via
+        <code>vscode-test</code>'s Extension Development Host.</li>
+    <li>Direct pty probes (<code>expect</code>) launching bare <code>claude --permission-mode bypassPermissions
+        --add-dir &lt;cwd&gt;</code> against both a fresh <code>CLAUDE_CONFIG_DIR</code> and the already-onboarded
+        <code>~/.agents/cc-tu</code>, to isolate onboarding screens from the mailbox mechanics.</li>
+  </ul>
+
+  <h2>Claude profile (deltas vs the frame)</h2>
+  <pre>const claudeInteractive: InteractiveCliProfile = {
+  id: "claude",
+  launchArgv: (o) =&gt; [
+    ...(o.model ? ["--model", o.model] : []),
+    "--permission-mode", "bypassPermissions",   // VERIFIED (see below)
+    "--add-dir", o.cwd,
+  ],
+  configEnv: (dir) =&gt; ({
+    ...(dir ? { CLAUDE_CONFIG_DIR: dir } : {}),
+    // CLAUDE_CODE_OAUTH_TOKEN passed via RunOpts.oauthToken, same as the
+    // existing one-shot adapter — NOT ANTHROPIC_API_KEY (see gotcha below).
+  }),
+  instructionFile: "CLAUDE.md",                  // confirmed
+  submitSequence: "\r",                           // VERIFIED — plain Enter, not kitty escape
+  sessionDir: (dir) =&gt; dir ? path.join(dir, "projects")
+                           : path.join(os.homedir(), ".claude", "projects"),
+  harvest: (text) =&gt; parseClaudeTranscript(text), // sessionId + usage; NO cost (see below)
+};</pre>
+
+  <h2>What was verified</h2>
+  <table>
+    <tr><th>Item</th><th>Finding</th></tr>
+    <tr>
+      <td>Interactive auto-approve flag</td>
+      <td><b>VERIFIED</b> — <code>--permission-mode bypassPermissions</code> (matches the existing one-shot
+          adapter). <code>claude --help</code> lists it as a valid <code>--permission-mode</code> choice, and this
+          very session's own transcript carries a live
+          <code>{"type":"permission-mode","permissionMode":"bypassPermissions"}</code> record for exactly this flag
+          under CLI 2.1.197. <code>--dangerously-skip-permissions</code> is a separate, blunter flag; no reason to
+          use it over the existing pattern.</td>
+    </tr>
+    <tr>
+      <td>Transcript path + slug rule</td>
+      <td><b>VERIFIED</b> — <code>$CLAUDE_CONFIG_DIR/projects/&lt;slug&gt;/&lt;sessionId&gt;.jsonl</code> (falls back
+          to <code>~/.claude/projects/...</code> when <code>CLAUDE_CONFIG_DIR</code> is unset). Slug = absolute cwd
+          with every <code>/</code> (including the leading one) replaced by <code>-</code>, e.g.
+          <code>/Users/x/y</code> → <code>-Users-x-y</code>. Confirmed directly: this repo's cwd maps to
+          <code>~/.agents/cc-tu/projects/-Users-binn-Projects-extension-factory-skynet-harness-active/</code>, which
+          holds this session's own <code>.jsonl</code>.</td>
+    </tr>
+    <tr>
+      <td>Written incrementally</td>
+      <td><b>VERIFIED</b> — this session's own transcript file grew from 63 to 66 lines, then to 78+, over the
+          course of ordinary tool calls in this conversation.</td>
+    </tr>
+    <tr>
+      <td>JSONL schema: <code>sessionId</code></td>
+      <td><b>VERIFIED, simpler than assumed</b> — <code>sessionId</code> (plus <code>cwd</code>, <code>version</code>,
+          <code>timestamp</code>, <code>gitBranch</code>) is a top-level field on <b>every</b> line regardless of
+          <code>type</code>. No dedicated <code>session_meta</code>-style line is needed; read it off the newest
+          line.</td>
+    </tr>
+    <tr>
+      <td>JSONL schema: per-turn usage</td>
+      <td><b>VERIFIED</b> — lines with <code>"type":"assistant"</code> carry <code>message.usage</code>:
+          <code>input_tokens</code>, <code>cache_creation_input_tokens</code>, <code>cache_read_input_tokens</code>,
+          <code>output_tokens</code> (plus <code>cache_creation.{ephemeral_1h_input_tokens,ephemeral_5m_input_tokens}</code>
+          and <code>service_tier</code>).</td>
+    </tr>
+    <tr>
+      <td>JSONL schema: cost</td>
+      <td><b>VERIFIED ABSENT — corrects the original doc.</b> Grepped every key across every transcript file in
+          <code>~/.agents/cc-tu/projects/**/*.jsonl</code>: no key containing <code>cost</code> exists anywhere in
+          the on-disk transcript. <code>costUsd</code>/<code>total_cost_usd</code> <b>only</b> appears in the
+          one-shot <code>-p --output-format stream-json</code> final <code>"result"</code> line (confirmed by
+          <code>src/test/claude-adapter.integration.test.ts</code>'s own fixture). Interactive harvest cannot get
+          cost from the transcript.</td>
+    </tr>
+    <tr>
+      <td>Alternate cost source</td>
+      <td><b>NEW FINDING</b> — <code>$CLAUDE_CONFIG_DIR/.claude.json</code> →
+          <code>projects["&lt;absolute-cwd&gt;"]</code> carries <code>lastCost</code>,
+          <code>lastTotalInputTokens</code>, <code>lastTotalOutputTokens</code>,
+          <code>lastTotalCacheCreationInputTokens</code>, <code>lastTotalCacheReadInputTokens</code>,
+          <code>lastSessionId</code>. This is a coarser, end-of-session rollup (updated around
+          <code>lastGracefulShutdown</code>, not per turn) — a usable supplementary source if
+          <code>WorkerUsage.costUsd</code> is wanted, but not a per-turn substitute for the transcript.</td>
+    </tr>
+    <tr>
+      <td>Resume command</td>
+      <td><b>VERIFIED</b> — <code>-r, --resume [value]</code> (by session id or interactive picker) and
+          <code>-c, --continue</code> (most recent conversation in cwd), confirmed in <code>claude --help</code>.</td>
+    </tr>
+    <tr>
+      <td><code>submitSequence</code></td>
+      <td><b>VERIFIED</b> — plain <code>\r</code> (Enter), not the kitty <code>[13u</code> escape the original
+          skeleton guessed. Confirmed both by direct <code>expect</code> pty probes (Enter reliably dismisses the
+          theme/trust/API-key onboarding screens and would land in the composer the same way) and by manual
+          observation of a live <code>terminal.sendText</code> + <code>sendSequence("\r")</code> round in the
+          VSCode Extension Development Host.</td>
+    </tr>
+  </table>
+
+  <h2>Bootstrap gotchas (Claude-specific — the frame and codex/agy don't have these)</h2>
+  <p>Unlike codex/agy, a <b>cold <code>CLAUDE_CONFIG_DIR</code> × cwd combination goes through up to three blocking
+     interactive screens before the composer is usable at all</b>. Each is real, was hit live during probing, and
+     each is skippable by pre-seeding config files before the interactive launch:</p>
+  <ol>
+    <li><b>First-run theme picker</b> ("Choose the text style...") — only on a <code>CLAUDE_CONFIG_DIR</code> that
+        has never completed onboarding. Skip by pre-seeding <code>$CLAUDE_CONFIG_DIR/settings.json</code> with
+        <code>{"theme": "dark"}</code> and <code>$CLAUDE_CONFIG_DIR/.claude.json</code> with
+        <code>"hasCompletedOnboarding": true</code>.</li>
+    <li><b>Workspace trust dialog</b> ("Quick safety check: is this a project you trust?") — keyed to the terminal's
+        actual <code>cwd</code> (not <code>--add-dir</code>), fires on every <b>new</b> cwd regardless of how
+        well-onboarded the config dir is. Confirmed live against the already-onboarded <code>~/.agents/cc-tu</code>
+        config dir with a brand-new temp cwd. Skip by pre-seeding
+        <code>.claude.json.projects["&lt;absolute-cwd&gt;"].hasTrustDialogAccepted = true</code> (mirrors the
+        frame's existing CLAUDE.md-marker bootstrap idea — same "write the config before launch" shape, applied to
+        a different file).</li>
+    <li><b>"Detected a custom API key" prompt</b> — fires whenever <code>ANTHROPIC_API_KEY</code> is present in the
+        launch env and hasn't been approved yet for that config dir. <b>Defaults to "2. No (recommended)"</b> — a
+        bare Enter <i>declines</i> the key and falls through to a full interactive OAuth login-method picker, which
+        cannot be automated headlessly. Decision persists to
+        <code>.claude.json.customApiKeyResponses.{approved,rejected}</code> keyed by a suffix of the key.
+        <b>Avoid entirely</b> by not using <code>ANTHROPIC_API_KEY</code> for interactive launches — use
+        <code>CLAUDE_CODE_OAUTH_TOKEN</code> via <code>configEnv</code>, exactly like the existing one-shot
+        <code>runClaude</code> adapter already does.</li>
+  </ol>
+  <div class="note warn">
+    <b>Net implication for the plan.</b> <code>runInteractive</code> needs a small bootstrap step analogous to the
+    frame's CLAUDE.md marker-block bootstrap — before first launch of a given <code>(configDir, cwd)</code> pair,
+    ensure <code>hasCompletedOnboarding</code>, <code>projects[cwd].hasTrustDialogAccepted</code>, and (if
+    API-key auth is ever used) <code>customApiKeyResponses</code> are pre-seeded. A config dir that has already
+    been used for a one-shot <code>runClaude</code> call in that same cwd should already satisfy all three (per
+    <code>--help</code> text, <code>-p</code>/non-interactive mode skips the trust dialog outright, and one-shot
+    auth already goes through <code>CLAUDE_CODE_OAUTH_TOKEN</code>) — so in practice this mostly matters for
+    <b>brand-new accounts/directories</b> that have never run any <code>claude</code> command before.
+  </div>
+
+  <h2>What's still open</h2>
+  <table>
+    <tr><th>Item</th><th>Status</th></tr>
+    <tr>
+      <td>Full automated mailbox pause/resume/done cycle against a <b>pre-seeded, already-authenticated</b> config
+          dir</td>
+      <td><b>NOT YET RUN.</b> Every live probe run so far hit one of the three bootstrap screens above (the probe
+          always uses a fresh temp cwd, so the trust dialog fires every time); none completed a full turn. The
+          mailbox/doorbell/poll mechanics themselves are unchanged from the already-proven codex/agy-ultra pattern
+          in <code>terminal-probe.test.ts</code> — only the pre-turn bootstrap differs. Re-run
+          <code>TERMINAL_PROBE=1 npx vscode-test --grep claude</code> after the profile's <code>launchCommand</code>
+          pre-seeds the config dir per the gotchas above.</td>
+    </tr>
+    <tr>
+      <td><code>/status</code> output shape</td>
+      <td><b>NOT YET CAPTURED</b> — blocked on the same bootstrap gap; <code>statusHints</code> in the probe
+          profile (<code>model</code>, <code>cwd</code>, <code>account</code>) are a guess, not yet confirmed.</td>
+    </tr>
+  </table>
+
+  <h2>Advantage over codex</h2>
+  <p>Claude's transcript carries <b>cache-token usage</b> (<code>cache_creation_input_tokens</code>,
+     <code>cache_read_input_tokens</code>) the same way codex's rollout does, and every line self-identifies
+     <code>sessionId</code> more simply than codex's dedicated <code>session_meta</code> line.</p>
+  <div class="note warn">
+    <b>The original "richest for cost" claim was wrong.</b> The interactive transcript has no
+    <code>costUsd</code>/<code>total_cost_usd</code> field at all (that only exists in one-shot <code>-p</code>
+    output). If cost is wanted, <code>.claude.json</code>'s per-project <code>lastCost</code> is the only on-disk
+    source, and it's an end-of-session rollup, not per-turn.
+  </div>
+
+  <h2>Out of scope</h2>
+  <p>Same as the frame, plus: this skeleton is <b>not implementation-ready</b> until the "What's still open" rows
+     above are resolved with a passing automated run. Everything else (multi-worker, recovery, Windows PID
+     polling, panel rework) is inherited from the frame's Out-of-scope.</p>
+
+  <footer>Spec: docs/superpowers/specs/2026-06-30-interactive-claude-design.md · rendered companion for human readers.</footer>
+</div>
+</body>
+</html>
