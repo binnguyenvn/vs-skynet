@@ -1,3 +1,5 @@
+import type { InteractiveOpts, InteractiveSession } from "./interactive/types";
+
 export type ErrorClass = "limit" | "transport" | "terminal";
 
 export type WorkerEvent =
@@ -45,4 +47,5 @@ export interface WorkerRun extends AsyncIterable<WorkerEvent> {
 export interface AgentAdapter {
   readonly id: "codex" | "claude" | "agy";
   run(opts: RunOpts): WorkerRun;
+  runInteractive?(opts: InteractiveOpts): Promise<InteractiveSession>;
 }

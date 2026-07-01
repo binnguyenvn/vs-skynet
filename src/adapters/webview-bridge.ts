@@ -1,4 +1,5 @@
 import type { AgentAdapter, RunOpts, WorkerEvent } from "./types";
+import type { InteractiveOpts, InteractiveSession, TurnResult } from "./interactive/types";
 import type { ExtensionToWebview } from "../webview/protocol";
 
 interface LogWebview {
@@ -7,7 +8,7 @@ interface LogWebview {
 
 const LABELS: Record<AgentAdapter["id"], string> = { codex: "Codex", claude: "Claude", agy: "Agy" };
 
-function formatEvent(ev: WorkerEvent): string | null {
+export function formatEvent(ev: WorkerEvent): string | null {
   switch (ev.kind) {
     case "started":
       return `started session ${ev.sessionId}${ev.model ? ` (${ev.model})` : ""}`;
@@ -35,6 +36,78 @@ function formatEvent(ev: WorkerEvent): string | null {
     }
     case "unknown":
       return null;
+  }
+}
+
+export async function startInteractiveTestToWebview(
+  adapter: AgentAdapter,
+  webview: LogWebview,
+  opts: InteractiveOpts
+): Promise<InteractiveSession | undefined> {
+  const post = (level: "info" | "error", text: string) =>
+    webview.postMessage({ type: "codexInteractiveLog", level, text });
+
+  if (!adapter.runInteractive) {
+    await post("error", `${adapter.id} does not support interactive mode`);
+    return undefined;
+  }
+
+  await post("info", `Starting ${LABELS[adapter.id]} interactive session...`);
+  try {
+    const session = await adapter.runInteractive(opts);
+    void (async () => {
+      try {
+        for await (const ev of session) {
+          const text = formatEvent(ev);
+          if (text) {
+            await post("info", text);
+          }
+        }
+      } catch (err) {
+        await post("error", err instanceof Error ? err.message : String(err));
+      }
+    })();
+    return session;
+  } catch (err) {
+    await post("error", err instanceof Error ? err.message : String(err));
+    return undefined;
+  }
+}
+
+export async function sendInteractiveTurn(
+  session: InteractiveSession | undefined,
+  webview: LogWebview,
+  prompt: string
+): Promise<void> {
+  const post = (level: "info" | "error", text: string) =>
+    webview.postMessage({ type: "codexInteractiveLog", level, text });
+
+  if (!session) {
+    await post("error", "no interactive session running - click Start Interactive first");
+    return;
+  }
+
+  try {
+    const result = await session.send(prompt);
+    const level = result.status === "paused" || result.status === "done" ? "info" : "error";
+    await post(level, formatTurnResult(result));
+  } catch (err) {
+    await post("error", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function formatTurnResult(result: TurnResult): string {
+  switch (result.status) {
+    case "paused":
+      return `paused: ${result.summary}`;
+    case "done":
+      return `done: ${result.summary}`;
+    case "error":
+      return `error: ${result.reason}`;
+    case "timeout":
+      return "timeout";
+    case "crashed":
+      return "crashed";
   }
 }
 

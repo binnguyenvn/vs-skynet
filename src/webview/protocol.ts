@@ -2,12 +2,13 @@
 // sides so the postMessage contract is checked at compile time.
 
 // Per-CLI test knobs from the webview forms. All optional; bridges fall back to
-// defaults. oauthToken is claude-only; other adapters ignore it.
+// defaults. oauthToken is claude-only; workerId is interactive-only.
 export interface TestFields {
   prompt?: string;
   model?: string;
   configDir?: string;
   oauthToken?: string;
+  workerId?: string;
 }
 
 export type WebviewToExtension =
@@ -15,10 +16,14 @@ export type WebviewToExtension =
   | { type: "hello"; name: string }
   | { type: "testCodex"; fields?: TestFields }
   | { type: "testAgy"; fields?: TestFields }
-  | { type: "testClaude"; fields?: TestFields };
+  | { type: "testClaude"; fields?: TestFields }
+  | { type: "testCodexInteractiveStart"; fields?: TestFields }
+  | { type: "testCodexInteractiveSend"; prompt: string }
+  | { type: "testCodexInteractiveDispose" };
 
 export type ExtensionToWebview =
   | { type: "greeting"; text: string }
   | { type: "codexLog"; level: "info" | "error"; text: string }
   | { type: "agyLog"; level: "info" | "error"; text: string }
-  | { type: "claudeLog"; level: "info" | "error"; text: string };
+  | { type: "claudeLog"; level: "info" | "error"; text: string }
+  | { type: "codexInteractiveLog"; level: "info" | "error"; text: string };
