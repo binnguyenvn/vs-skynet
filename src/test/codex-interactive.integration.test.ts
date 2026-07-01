@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { codexAdapter } from "../adapters/codex/codex-adapter";
 
 const describe = process.env.CODEX_INTERACTIVE_E2E ? suite : suite.skip;
+const CODEX_HOME = process.env.CODEX_HOME ?? "/Users/binn/.agents/codex-plus";
 
 describe("codex interactive mode (real CLI, slow - set CODEX_INTERACTIVE_E2E=1)", function () {
   this.timeout(240_000);
@@ -12,11 +13,7 @@ describe("codex interactive mode (real CLI, slow - set CODEX_INTERACTIVE_E2E=1)"
   test("drives a real codex TUI through pause and done via the production adapter", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "codex-interactive-e2e-"));
     const stateFile = path.join(cwd, "flow-state.txt");
-    const session = await codexAdapter.runInteractive!({
-      cwd,
-      workerId: "e2e",
-      ...(process.env.CODEX_HOME ? { configDir: process.env.CODEX_HOME } : {}),
-    });
+    const session = await codexAdapter.runInteractive!({ cwd, workerId: "e2e", configDir: CODEX_HOME });
 
     try {
       const first = await session.send(
