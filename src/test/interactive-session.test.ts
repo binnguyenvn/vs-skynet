@@ -158,4 +158,36 @@ suite("InteractiveSession", () => {
     assert.strictEqual(await fs.readFile(path.join(cwd, "FAKE_AGENTS.md"), "utf8"), "# Real project instructions\n");
     await assert.rejects(fs.access(path.join(cwd, ".skynet", "w7")));
   });
+
+  test("falls back to sessionInfoPrompt when harvest yields no sessionId, using it once found", async () => {
+    const cwd = await mkTmpRepo();
+    const transport = new FakeTerminalTransport();
+    const profile = fakeProfile({
+      sessionInfoPrompt: (file) => `write conversation info to ${file}`,
+    });
+    const session = await startInteractive(
+      profile,
+      { cwd, workerId: "w8", readyTimeoutMs: 2_000, turnTimeoutMs: 2_000 },
+      {
+        terminalFactory: { create: () => transport },
+        launchDelayMs: 0,
+        mailboxPollMs: 20,
+        sessionInfoTimeoutMs: 2_000,
+      }
+    );
+
+    writeOutboxSoon(cwd, "w8", 1, { status: "paused", summary: "step 1 complete" });
+    setTimeout(() => {
+      void fs.writeFile(
+        path.join(cwd, ".skynet", "w8", "outbox", "session-info.json"),
+        JSON.stringify({ conversationId: "conv-42" })
+      );
+    }, 60);
+
+    const result = await session.send("turn 1");
+    assert.deepStrictEqual(result, { status: "paused", summary: "step 1 complete" });
+    assert.strictEqual(await session.sessionId, "conv-42");
+
+    await session.dispose();
+  });
 });
