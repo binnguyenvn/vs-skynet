@@ -20,9 +20,9 @@ function fakeInteractiveSession(events: WorkerEvent[], turnResults: TurnResult[]
   };
 }
 
-function fakeAdapter(runInteractive?: AgentAdapter["runInteractive"]): AgentAdapter {
+function fakeAdapter(id: AgentAdapter["id"], runInteractive?: AgentAdapter["runInteractive"]): AgentAdapter {
   return {
-    id: "codex",
+    id,
     run: () => {
       throw new Error("run() not used by this test");
     },
@@ -35,7 +35,7 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 suite("startInteractiveTestToWebview", () => {
-  test("starts a session and streams its events as codexInteractiveLog lines", async () => {
+  test("starts a codex session and streams its events as codexInteractiveLog lines", async () => {
     const posted: ExtensionToWebview[] = [];
     const session = fakeInteractiveSession(
       [
@@ -44,7 +44,7 @@ suite("startInteractiveTestToWebview", () => {
       ],
       []
     );
-    const adapter = fakeAdapter(async () => session);
+    const adapter = fakeAdapter("codex", async () => session);
 
     const returned = await startInteractiveTestToWebview(
       adapter,
@@ -61,10 +61,36 @@ suite("startInteractiveTestToWebview", () => {
     ]);
   });
 
+  test("starts an agy session and streams its events as agyInteractiveLog lines", async () => {
+    const posted: ExtensionToWebview[] = [];
+    const session = fakeInteractiveSession(
+      [
+        { kind: "started", sessionId: "sess-2" },
+        { kind: "message", text: "hello from agy turn 1" },
+      ],
+      []
+    );
+    const adapter = fakeAdapter("agy", async () => session);
+
+    const returned = await startInteractiveTestToWebview(
+      adapter,
+      { postMessage: (m) => (posted.push(m), true) },
+      { cwd: "/tmp", workerId: "w1" }
+    );
+    await flushMicrotasks();
+
+    assert.strictEqual(returned, session);
+    assert.deepStrictEqual(posted, [
+      { type: "agyInteractiveLog", level: "info", text: "Starting Agy interactive session..." },
+      { type: "agyInteractiveLog", level: "info", text: "started session sess-2" },
+      { type: "agyInteractiveLog", level: "info", text: "hello from agy turn 1" },
+    ]);
+  });
+
   test("posts an error and returns undefined when the adapter has no runInteractive", async () => {
     const posted: ExtensionToWebview[] = [];
     const returned = await startInteractiveTestToWebview(
-      fakeAdapter(undefined),
+      fakeAdapter("codex", undefined),
       { postMessage: (m) => (posted.push(m), true) },
       { cwd: "/tmp", workerId: "w1" }
     );
@@ -88,11 +114,11 @@ suite("sendInteractiveTurn", () => {
     ]);
     const webview = { postMessage: (m: ExtensionToWebview) => (posted.push(m), true) };
 
-    await sendInteractiveTurn(session, webview, "turn 1");
-    await sendInteractiveTurn(session, webview, "turn 2");
-    await sendInteractiveTurn(session, webview, "turn 3");
-    await sendInteractiveTurn(session, webview, "turn 4");
-    await sendInteractiveTurn(session, webview, "turn 5");
+    await sendInteractiveTurn(session, webview, "turn 1", "codexInteractiveLog");
+    await sendInteractiveTurn(session, webview, "turn 2", "codexInteractiveLog");
+    await sendInteractiveTurn(session, webview, "turn 3", "codexInteractiveLog");
+    await sendInteractiveTurn(session, webview, "turn 4", "codexInteractiveLog");
+    await sendInteractiveTurn(session, webview, "turn 5", "codexInteractiveLog");
 
     assert.deepStrictEqual(posted, [
       { type: "codexInteractiveLog", level: "info", text: "paused: step 1 complete" },
@@ -103,9 +129,19 @@ suite("sendInteractiveTurn", () => {
     ]);
   });
 
+  test("posts to the agyInteractiveLog channel when told to", async () => {
+    const posted: ExtensionToWebview[] = [];
+    const session = fakeInteractiveSession([], [{ status: "paused", summary: "agy step 1" }]);
+    const webview = { postMessage: (m: ExtensionToWebview) => (posted.push(m), true) };
+
+    await sendInteractiveTurn(session, webview, "turn 1", "agyInteractiveLog");
+
+    assert.deepStrictEqual(posted, [{ type: "agyInteractiveLog", level: "info", text: "paused: agy step 1" }]);
+  });
+
   test("posts an error when no session is running yet", async () => {
     const posted: ExtensionToWebview[] = [];
-    await sendInteractiveTurn(undefined, { postMessage: (m) => (posted.push(m), true) }, "turn 1");
+    await sendInteractiveTurn(undefined, { postMessage: (m) => (posted.push(m), true) }, "turn 1", "codexInteractiveLog");
     assert.deepStrictEqual(posted, [
       {
         type: "codexInteractiveLog",

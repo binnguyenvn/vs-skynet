@@ -5,6 +5,7 @@ import { ring } from "./doorbell";
 import { bootstrapInstructionFile, teardownInstructionFile } from "./instruction-file";
 import { Mailbox } from "./mailbox";
 import { harvestSession } from "./session-harvester";
+import { probeSessionInfo } from "./session-info-probe";
 import { buildLaunchCommand } from "./shell";
 import type {
   HarvestResult,
@@ -21,6 +22,7 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000;
 const DEFAULT_CRASH_POLL_MS = 3_000;
 const DEFAULT_LAUNCH_DELAY_MS = 1_500;
 const DEFAULT_MAILBOX_POLL_MS = 500;
+const DEFAULT_SESSION_INFO_TIMEOUT_MS = 90_000;
 
 export interface StartInteractiveDeps {
   terminalFactory: TerminalFactory;
@@ -28,6 +30,7 @@ export interface StartInteractiveDeps {
   crashPollMs: number;
   launchDelayMs: number;
   mailboxPollMs: number;
+  sessionInfoTimeoutMs: number;
 }
 
 async function defaultTerminalFactory(): Promise<TerminalFactory> {
@@ -51,6 +54,7 @@ export async function startInteractive(
     crashPollMs: deps.crashPollMs ?? DEFAULT_CRASH_POLL_MS,
     launchDelayMs: deps.launchDelayMs ?? DEFAULT_LAUNCH_DELAY_MS,
     mailboxPollMs: deps.mailboxPollMs ?? DEFAULT_MAILBOX_POLL_MS,
+    sessionInfoTimeoutMs: deps.sessionInfoTimeoutMs ?? DEFAULT_SESSION_INFO_TIMEOUT_MS,
   };
 
   const mailbox = new Mailbox(opts.cwd, opts.workerId);
@@ -172,7 +176,17 @@ class InteractiveSessionImpl implements InteractiveSession {
   }
 
   private async afterTurn(base: TurnResult): Promise<TurnResult> {
-    const harvested: HarvestResult = await harvestSession(this.profile, this.opts.configDir).catch(() => ({}));
+    let harvested: HarvestResult = await harvestSession(this.profile, this.opts.configDir).catch(() => ({}));
+
+    if (!harvested.sessionId && this._sessionId === undefined && this.profile.sessionInfoPrompt) {
+      harvested = await probeSessionInfo(
+        this.transport,
+        this.mailbox.dir,
+        this.profile.sessionInfoPrompt,
+        this.profile.submitSequence,
+        this.deps.sessionInfoTimeoutMs
+      ).catch(() => harvested);
+    }
 
     if (this._sessionId === undefined && harvested.sessionId) {
       this._sessionId = harvested.sessionId;

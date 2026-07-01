@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { classifyError } from "../classify";
+import { startInteractive } from "../interactive/interactive-session";
 import { mapAgyLine } from "./events";
+import { agyInteractive } from "./interactive-profile";
 import type { AgentAdapter, RunOpts, WorkerEvent, WorkerResult, WorkerRun } from "../types";
 
 export interface AgyRunOpts extends RunOpts {
@@ -130,4 +132,5 @@ export function runAgy(opts: AgyRunOpts): WorkerRun {
 export const agyAdapter: AgentAdapter = {
   id: "agy",
   run: (opts) => runAgy(opts),
+  runInteractive: (opts) => startInteractive(agyInteractive, opts),
 };

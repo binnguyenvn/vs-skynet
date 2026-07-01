@@ -36,6 +36,7 @@ export function openWebview(
   });
 
   let codexInteractiveSession: InteractiveSession | undefined;
+  let agyInteractiveSession: InteractiveSession | undefined;
 
   webview.onDidReceiveMessage(
     (msg: WebviewToExtension) => {
@@ -70,13 +71,33 @@ export function openWebview(
         })();
       }
       if (msg.type === "testCodexInteractiveSend") {
-        void sendInteractiveTurn(codexInteractiveSession, webview, msg.prompt);
+        void sendInteractiveTurn(codexInteractiveSession, webview, msg.prompt, "codexInteractiveLog");
       }
       if (msg.type === "testCodexInteractiveDispose") {
         const session = codexInteractiveSession;
         codexInteractiveSession = undefined;
         void session?.dispose();
         void webview.postMessage({ type: "codexInteractiveLog", level: "info", text: "disposed" });
+      }
+      if (msg.type === "testAgyInteractiveStart") {
+        const fields = clean(msg.fields);
+        void (async () => {
+          agyInteractiveSession = await startInteractiveTestToWebview(agyAdapter, webview, {
+            cwd: cwd(),
+            workerId: fields.workerId || "webview",
+            model: fields.model,
+            configDir: fields.configDir,
+          });
+        })();
+      }
+      if (msg.type === "testAgyInteractiveSend") {
+        void sendInteractiveTurn(agyInteractiveSession, webview, msg.prompt, "agyInteractiveLog");
+      }
+      if (msg.type === "testAgyInteractiveDispose") {
+        const session = agyInteractiveSession;
+        agyInteractiveSession = undefined;
+        void session?.dispose();
+        void webview.postMessage({ type: "agyInteractiveLog", level: "info", text: "disposed" });
       }
     },
     undefined,
